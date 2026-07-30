@@ -46,6 +46,11 @@
             <button onclick="toggleSettingsModal(true)" class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-sky-500/20 bg-slate-900/60 text-sky-300 shadow-sm hover:bg-sky-500/20 hover:text-white transition cursor-pointer" title="Cloud API Setup">
                 <i class="fa-solid fa-gear"></i>
             </button>
+            <!-- Fetch Button -->
+            <button onclick="fetchConfigurationWithAlert()" class="inline-flex items-center space-x-1.5 sm:space-x-2 rounded-xl bg-slate-800 px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-sky-300 shadow-lg border border-sky-500/20 transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer" title="Fetch Data from Cloud">
+                <i class="fa-solid fa-cloud-arrow-down"></i>
+                <span>Fetch from Cloud</span>
+            </button>
             <!-- Sync/Save Button -->
             <button onclick="saveConfiguration()" class="inline-flex items-center space-x-1.5 sm:space-x-2 rounded-xl bg-sky-600 px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg transition hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
@@ -451,6 +456,13 @@
 
             loadSettings();
             fetchConfiguration();
+
+            // Periodic background cloud synchronization (every 60 seconds)
+            setInterval(() => {
+                if (Store.getApiUrl()) {
+                    saveConfiguration(true);
+                }
+            }, 60000);
         });
 
         // Connection loading and configuration
@@ -540,7 +552,7 @@
         };
 
         // Fetch / save data synchronizations wrapped cleanly in ES6+
-        const fetchConfiguration = () => {
+        const fetchConfiguration = (silent = true) => {
             const apiUrl = Store.getApiUrl();
             const apiKey = Store.getApiKey();
 
@@ -552,7 +564,7 @@
                     headers["Authorization"] = `Bearer ${apiKey}`;
                 }
 
-                fetch(apiUrl, { method: "GET", headers })
+                return fetch(apiUrl, { method: "GET", headers })
                 .then(res => {
                     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
                     return res.json();
@@ -569,16 +581,31 @@
                     onEquipmentTypeChange();
                     renderLocationFilters();
                     renderRecords();
+
+                    if (!silent) {
+                        alert("Configuration fetched successfully from Cloudflare and cached locally!");
+                    }
                 })
                 .catch(err => {
                     console.error("Fetch failed. Loading backup", err);
                     setSyncStatus("offline", "Cloud Error (Offline Mode)");
                     loadLocalData();
+                    if (!silent) {
+                        alert("Cloud fetch failed! Reverted to local backup database.");
+                    }
                 });
             } else {
                 setSyncStatus("offline", "Local Mode (Offline)");
                 loadLocalData();
+                if (!silent) {
+                    alert("No Cloud API URL configured in settings.");
+                }
+                return Promise.resolve();
             }
+        };
+
+        const fetchConfigurationWithAlert = () => {
+            fetchConfiguration(false);
         };
 
         const loadLocalData = () => {
@@ -593,7 +620,7 @@
             renderRecords();
         };
 
-        const saveConfiguration = () => {
+        const saveConfiguration = (silent = false) => {
             const apiUrl = Store.getApiUrl();
             const apiKey = Store.getApiKey();
 
@@ -607,7 +634,7 @@
                     headers["Authorization"] = `Bearer ${apiKey}`;
                 }
 
-                fetch(apiUrl, {
+                return fetch(apiUrl, {
                     method: "POST",
                     headers,
                     body: JSON.stringify(Store.config)
@@ -615,16 +642,23 @@
                 .then(res => {
                     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
                     setSyncStatus("cloud", "Saved in Cloud");
-                    alert("Configuration synchronized successfully to Cloudflare!");
+                    if (!silent) {
+                        alert("Configuration synchronized successfully to Cloudflare!");
+                    }
                 })
                 .catch(err => {
                     console.error("Save to cloud failed", err);
                     setSyncStatus("offline", "Cloud Saving Error");
-                    alert("Cloud sync failed! Configuration was backed up locally in your browser.");
+                    if (!silent) {
+                        alert("Cloud sync failed! Configuration was backed up locally in your browser.");
+                    }
                 });
             } else {
                 setSyncStatus("offline", "Saved Locally (Offline)");
-                alert("Configuration saved locally in browser (LocalStorage).");
+                if (!silent) {
+                    alert("Configuration saved locally in browser (LocalStorage).");
+                }
+                return Promise.resolve();
             }
         };
 
@@ -663,11 +697,13 @@
                 }
 
                 Store.saveLocalBackup();
+                saveConfiguration(true);
             },
 
             delete: (id) => {
                 Store.config.records = Store.config.records.filter(r => r.id !== id);
                 Store.saveLocalBackup();
+                saveConfiguration(true);
             }
         };
 
@@ -1143,6 +1179,7 @@
                     renderLocationFilters();
                     renderRecords();
                     Store.saveLocalBackup();
+                    saveConfiguration(true);
 
                     alert(`Import completed successfully!\n\nAdded: ${addedCount}\nOverwritten: ${overwrittenCount}\nSkipped/Invalid: ${skippedCount}`);
                 } catch (err) {
