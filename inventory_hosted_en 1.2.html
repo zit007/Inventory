@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Equipment Inventory Manager v1.2.0</title>
+    <title>Equipment Inventory Manager v1.2.1</title>
     <!-- Tailwind CSS CDN for a modern, responsive interface -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Inter Font for beautiful modern typography -->
@@ -457,12 +457,12 @@
             loadSettings();
             fetchConfiguration();
 
-            // Periodic background cloud synchronization (every 60 seconds)
+            // Periodic background cloud synchronization (every 120 seconds)
             setInterval(() => {
                 if (Store.getApiUrl()) {
                     saveConfiguration(true);
                 }
-            }, 60000);
+            }, 120000);
         });
 
         // Connection loading and configuration
