@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Equipment Inventory Manager v1.2.1</title>
+    <title>Equipment Inventory Manager v1.2.0</title>
     <!-- Tailwind CSS CDN for a modern, responsive interface -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Inter Font for beautiful modern typography -->
@@ -31,7 +31,7 @@
             <div class="min-w-0">
                 <div class="flex items-center space-x-2">
                     <h1 class="text-sm sm:text-base font-bold tracking-tight text-white truncate">Equipment Inventory Recordings</h1>
-                    <span class="inline-flex items-center rounded-md bg-sky-500/20 px-2 py-0.5 text-xs font-semibold text-sky-300 ring-1 ring-inset ring-sky-500/30 flex-shrink-0">v2.2.0</span>
+                    <span class="inline-flex items-center rounded-md bg-sky-500/20 px-2 py-0.5 text-xs font-semibold text-sky-300 ring-1 ring-inset ring-sky-500/30 flex-shrink-0">v2.3.0</span>
                 </div>
                 <p class="hidden sm:block text-xs font-medium text-slate-400">Equipment Management</p>
             </div>
@@ -51,9 +51,14 @@
                 <i class="fa-solid fa-cloud-arrow-down"></i>
                 <span>Fetch from Cloud</span>
             </button>
-            <!-- Sync/Save Button -->
-            <button onclick="saveConfiguration()" class="inline-flex items-center space-x-1.5 sm:space-x-2 rounded-xl bg-sky-600 px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg transition hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer">
+            <!-- Upload to Cloud Button -->
+            <button onclick="uploadToCloudWithAlert()" class="inline-flex items-center space-x-1.5 sm:space-x-2 rounded-xl bg-sky-600 px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-white shadow-lg transition hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer" title="Upload Data to Cloud">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Upload to Cloud</span>
+            </button>
+            <!-- Save Config Button -->
+            <button onclick="saveConfiguration(false)" class="inline-flex items-center space-x-1.5 sm:space-x-2 rounded-xl bg-slate-800 px-3 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-sky-300 shadow-lg border border-sky-500/20 transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer" title="Save Backup Locally">
+                <i class="fa-solid fa-floppy-disk"></i>
                 <span>Save Config</span>
             </button>
         </div>
@@ -367,7 +372,7 @@
     }
     </script>
 
-    <!-- Script Dynamic Context & Synchronizer (V2.2.0 Refactor) -->
+    <!-- Script Dynamic Context & Synchronizer (V2.3.0 Refactor) -->
     <script>
         // Centralized DOM cache to avoid repetitive document.getElementById lookups
         let DOM = {};
@@ -457,12 +462,12 @@
             loadSettings();
             fetchConfiguration();
 
-            // Periodic background cloud synchronization (every 120 seconds)
+            // Periodic background cloud synchronization (every 60 seconds)
             setInterval(() => {
                 if (Store.getApiUrl()) {
                     saveConfiguration(true);
                 }
-            }, 120000);
+            }, 60000);
         });
 
         // Connection loading and configuration
@@ -606,6 +611,16 @@
 
         const fetchConfigurationWithAlert = () => {
             fetchConfiguration(false);
+        };
+
+        const uploadToCloudWithAlert = () => {
+            const apiUrl = Store.getApiUrl();
+            if (!apiUrl) {
+                alert("Cloud API URL is not configured! Please configure it in settings before uploading.");
+                toggleSettingsModal(true);
+                return;
+            }
+            saveConfiguration(false);
         };
 
         const loadLocalData = () => {
