@@ -6,6 +6,7 @@ import socket
 import threading
 import queue
 import tkinter as tk
+from tkinter import messagebox
 import customtkinter as ctk
 
 # Safe Keyboard Driver Importing
@@ -325,6 +326,19 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # Initialize thread-safe formatting strings from UI values
         self.update_wedge_formats()
+
+        # Bind window close confirmation catcher
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        """Prompt confirmation before exiting the application."""
+        if messagebox.askyesno("Exit Confirmation", "Are you sure you want to close the application?\nAny active connection will be disconnected."):
+            # Clean up background connection worker
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
+            self.destroy()
 
     def build_ui(self):
         # 1. Header Frame
