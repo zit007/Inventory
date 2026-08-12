@@ -4,6 +4,7 @@ import re
 import time
 import socket
 import threading
+import queue
 import tkinter as tk
 import customtkinter as ctk
 
@@ -309,9 +310,21 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.worker = ConnectionWorker(self)
         self.last_received_bytes = b""
 
+        # Thread-safe formatting state
+        self.prefix_value = ""
+        self.suffix_value = ""
+
+        # Thread-safe sequential wedge queue
+        self.wedge_queue = queue.Queue()
+        self.wedge_thread = threading.Thread(target=self._wedge_queue_consumer, daemon=True)
+        self.wedge_thread.start()
+
         # Main layout construction
         self.build_ui()
         self.refresh_com_ports()
+
+        # Initialize thread-safe formatting strings from UI values
+        self.update_wedge_formats()
 
     def build_ui(self):
         # 1. Header Frame
@@ -376,9 +389,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.radio_tcp.pack(side="left", expand=True, fill="x", padx=5)
 
         # 3. Parameter Panel Container
-        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=200)
+        self.params_container = ctk.CTkFrame(self, corner_radius=10)
         self.params_container.pack(fill="x", padx=25, pady=10)
-        self.params_container.pack_propagate(False)
 
         # 3A. RS232 Sub-panel
         self.rs232_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
@@ -421,6 +433,31 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.stopbits_dropdown.set("1")
         self.stopbits_dropdown.pack(side="left", expand=True, fill="x", padx=(5, 0))
 
+        # Local RS232 Buttons
+        self.rs232_btn_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
+        self.rs232_btn_frame.grid(row=3, column=0, columnspan=2, pady=(15, 10), sticky="we")
+
+        self.btn_rs232_connect = ctk.CTkButton(
+            self.rs232_btn_frame,
+            text="Connect and Send to USB",
+            command=self.handle_connect,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color="#1f538d",
+            hover_color="#14375e",
+            height=36
+        )
+        self.btn_rs232_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
+
+        self.btn_rs232_disconnect = ctk.CTkButton(
+            self.rs232_btn_frame,
+            text="Disconnect",
+            command=self.handle_disconnect,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color="#7a2a2a",
+            hover_color="#541c1c",
+            height=36
+        )
+
         # 3B. TCP/IP Sub-panel
         self.tcp_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
         self.tcp_panel.columnconfigure(0, weight=1)
@@ -437,6 +474,31 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.port_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 5000")
         self.port_entry.insert(0, "5000")
         self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=15)
+
+        # Local TCP/IP Buttons
+        self.tcp_btn_frame = ctk.CTkFrame(self.tcp_panel, fg_color="transparent")
+        self.tcp_btn_frame.grid(row=2, column=0, columnspan=2, pady=(15, 10), sticky="we")
+
+        self.btn_tcp_connect = ctk.CTkButton(
+            self.tcp_btn_frame,
+            text="Connect and Send to USB",
+            command=self.handle_connect,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color="#1f538d",
+            hover_color="#14375e",
+            height=36
+        )
+        self.btn_tcp_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
+
+        self.btn_tcp_disconnect = ctk.CTkButton(
+            self.tcp_btn_frame,
+            text="Disconnect",
+            command=self.handle_disconnect,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color="#7a2a2a",
+            hover_color="#541c1c",
+            height=36
+        )
 
         # Pack initial panel based on default radio selection
         self.toggle_connection_panels()
@@ -461,6 +523,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         ctk.CTkLabel(prefix_cell, text="Prefix (Optional):", font=ctk.CTkFont(family="Segoe UI", size=11)).pack(anchor="w")
         self.prefix_entry = ctk.CTkEntry(prefix_cell, placeholder_text="e.g. [STX] or \\t")
         self.prefix_entry.pack(fill="x", pady=2)
+        self.prefix_entry.bind("<KeyRelease>", self.update_wedge_formats)
+        self.prefix_entry.bind("<FocusOut>", self.update_wedge_formats)
 
         # Suffix Input
         suffix_cell = ctk.CTkFrame(fields_row, fg_color="transparent")
@@ -469,6 +533,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.suffix_entry = ctk.CTkEntry(suffix_cell, placeholder_text="e.g. \\r\\n")
         self.suffix_entry.insert(0, "\\r\\n")
         self.suffix_entry.pack(fill="x", pady=2)
+        self.suffix_entry.bind("<KeyRelease>", self.update_wedge_formats)
+        self.suffix_entry.bind("<FocusOut>", self.update_wedge_formats)
 
         # Tip label for escape sequences and special tags
         tip_label = ctk.CTkLabel(
@@ -518,38 +584,9 @@ class RS232TCPToUSBApp(ctk.CTk):
         controls_frame = ctk.CTkFrame(self, fg_color="transparent")
         controls_frame.pack(fill="x", padx=25, pady=15)
 
-        # Action Buttons container (Left)
-        buttons_box = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        buttons_box.pack(side="left")
-
-        self.btn_connect = ctk.CTkButton(
-            buttons_box,
-            text="Connect and Send to USB",
-            command=self.handle_connect,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            fg_color="#2b7336",
-            hover_color="#1e5225",
-            width=190,
-            height=40
-        )
-        self.btn_connect.pack(side="left", padx=(0, 10))
-
-        self.btn_disconnect = ctk.CTkButton(
-            buttons_box,
-            text="Disconnect",
-            command=self.handle_disconnect,
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            state="disabled",
-            fg_color="#7a2a2a",
-            hover_color="#541c1c",
-            width=110,
-            height=40
-        )
-        self.btn_disconnect.pack(side="left")
-
-        # Status Circle Indicator container (Right)
+        # Status Circle Indicator container (Centered nicely)
         self.status_container = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        self.status_container.pack(side="right", fill="y")
+        self.status_container.pack(anchor="center", pady=5)
 
         # Small status canvas to draw a colored dot
         self.status_canvas = tk.Canvas(self.status_container, width=20, height=20, bg="#1a1a1a", highlightthickness=0)
@@ -608,6 +645,62 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         self.status_canvas.itemconfig(self.status_dot, fill=hex_color)
         self.status_text_lbl.configure(text=text, text_color=hex_color)
+
+        conn_mode = self.connection_type.get()
+
+        if color == "green":
+            # Successful connection
+            if conn_mode == "RS232":
+                self.btn_rs232_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_tcp_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+        elif color == "orange":
+            # Connecting state
+            if conn_mode == "RS232":
+                self.btn_rs232_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_tcp_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+        else:
+            # Disconnected or Error state. Restore both to original.
+            self.btn_rs232_connect.configure(
+                fg_color="#1f538d",
+                hover_color="#14375e",
+                text="Connect and Send to USB",
+                state="normal"
+            )
+            self.btn_rs232_disconnect.pack_forget()
+
+            self.btn_tcp_connect.configure(
+                fg_color="#1f538d",
+                hover_color="#14375e",
+                text="Connect and Send to USB",
+                state="normal"
+            )
+            self.btn_tcp_disconnect.pack_forget()
 
     def handle_connect(self):
         """Handles connection action, validating input parameters and launching threads."""
@@ -669,12 +762,39 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.ip_entry.configure(state=state)
         self.port_entry.configure(state=state)
 
-        if state == "disabled":
-            self.btn_connect.configure(state="disabled", fg_color="#444444")
-            self.btn_disconnect.configure(state="normal")
-        else:
-            self.btn_connect.configure(state="normal", fg_color="#2b7336")
-            self.btn_disconnect.configure(state="disabled")
+    def update_wedge_formats(self, event=None):
+        """Thread-safely reads values from Prefix and Suffix entries on the main thread."""
+        try:
+            self.prefix_value = self.prefix_entry.get()
+        except Exception:
+            self.prefix_value = ""
+
+        try:
+            self.suffix_value = self.suffix_entry.get()
+        except Exception:
+            self.suffix_value = ""
+
+    def _wedge_queue_consumer(self):
+        """Dedicated background thread loop that sequentializes keyboard wedge typing."""
+        while True:
+            try:
+                # Wait for the next item in the queue
+                raw_data_str, prefix_val, suffix_val = self.wedge_queue.get()
+
+                # 1. Simulate Prefix
+                if prefix_val:
+                    parse_and_simulate(prefix_val)
+
+                # 2. Simulate Raw Received Data (no strip/clean as requested)
+                simulate_keyboard_chars(raw_data_str)
+
+                # 3. Simulate Suffix
+                if suffix_val:
+                    parse_and_simulate(suffix_val)
+
+                self.wedge_queue.task_done()
+            except Exception as e:
+                print(f"[WEDGE ERROR] {e}")
 
     def handle_data_received(self, data_bytes):
         """Callback triggered on worker thread upon receiving raw byte packet."""
@@ -686,28 +806,11 @@ class RS232TCPToUSBApp(ctk.CTk):
         except Exception:
             text = data_bytes.decode('latin-1', errors='replace')
 
-        # Run keyboard wedge emulations asynchronously to keep connection looping fast
-        wedge_thread = threading.Thread(target=self._run_keyboard_wedge, args=(text,), daemon=True)
-        wedge_thread.start()
+        # Enqueue the text along with thread-safe snapshots of prefix/suffix
+        self.wedge_queue.put((text, self.prefix_value, self.suffix_value))
 
         # Update monitor UI thread-safely
         self.after(0, self.update_monitor_view)
-
-    def _run_keyboard_wedge(self, raw_data_str):
-        """Executes full keyboard wedge formatting: prefix + raw payload + suffix."""
-        prefix_val = self.prefix_entry.get()
-        suffix_val = self.suffix_entry.get()
-
-        # 1. Simulate Prefix
-        if prefix_val:
-            parse_and_simulate(prefix_val)
-
-        # 2. Simulate Raw Received Data (no strip/clean as requested)
-        simulate_keyboard_chars(raw_data_str)
-
-        # 3. Simulate Suffix
-        if suffix_val:
-            parse_and_simulate(suffix_val)
 
     def update_monitor_view(self):
         """Updates monitor view textbox in accordance with show_special_chars checkbox."""
