@@ -32,7 +32,7 @@ except Exception:
 # -------------------------------------------------------------
 # CONSTANTS & CONFIGURATION
 # -------------------------------------------------------------
-VERSION = "v1.0.0"
+VERSION = "v1.0.3 @NM"
 
 CONTROL_CHARS = {
     0: '[NUL]', 1: '[SOH]', 2: '[STX]', 3: '[ETX]', 4: '[EOT]', 5: '[ENQ]', 6: '[ACK]',
@@ -298,7 +298,7 @@ class RS232TCPToUSBApp(ctk.CTk):
         super().__init__()
 
         # Window styling
-        self.title("RS232-TCP to USB-KBD Wedge")
+        self.title("Datalogic SIS EE RS232/TCP to USB-KBD Wedge")
         self.geometry("580x680")
         self.resizable(False, False)
         ctk.set_appearance_mode("dark")
@@ -320,7 +320,7 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         title_label = ctk.CTkLabel(
             header_frame,
-            text="RS232-TCP to USB Keyboard Wedge",
+            text="RS232/TCP to USB Keyboard Wedge",
             font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold")
         )
         title_label.pack(side="left")
@@ -428,14 +428,14 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # Server Host/IP
         ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=15)
-        self.ip_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 192.168.1.100")
-        self.ip_entry.insert(0, "127.0.0.1")
+        self.ip_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 192.168.3.100")
+        self.ip_entry.insert(0, "192.168.3.100")
         self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=15)
 
         # Server Port
         ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=15)
-        self.port_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 5000")
-        self.port_entry.insert(0, "5000")
+        self.port_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 51236")
+        self.port_entry.insert(0, "51236")
         self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=15)
 
         # Pack initial panel based on default radio selection
