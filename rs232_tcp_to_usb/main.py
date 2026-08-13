@@ -357,8 +357,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         super().__init__()
 
         # Window styling
-        self.title("Datalogic RS232/TCP to USB-KBD Wedge")
-        self.geometry("580x750")
+        self.title("RS232-TCP to USB-KBD Wedge")
+        self.geometry("580x700")
         self.resizable(False, False)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -408,7 +408,7 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         title_label = ctk.CTkLabel(
             header_frame,
-            text="RS232/TCP to USB Keyboard Wedge",
+            text="RS232-TCP to USB Keyboard Wedge",
             font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold")
         )
         title_label.pack(side="left")
@@ -431,17 +431,17 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # 2. Connection Type Selection Frame
         conn_selector_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
-        conn_selector_frame.pack(fill="x", padx=25, pady=10)
+        conn_selector_frame.pack(fill="x", padx=25, pady=5)
 
         conn_label = ctk.CTkLabel(
             conn_selector_frame,
             text="Choose Input Connection Type:",
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold")
         )
-        conn_label.pack(pady=(10, 5), padx=15, anchor="w")
+        conn_label.pack(pady=(8, 4), padx=15, anchor="w")
 
         radio_container = ctk.CTkFrame(conn_selector_frame, fg_color="transparent")
-        radio_container.pack(fill="x", padx=15, pady=(0, 12))
+        radio_container.pack(fill="x", padx=15, pady=(0, 8))
 
         self.radio_rs232 = ctk.CTkRadioButton(
             radio_container,
@@ -465,7 +465,7 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # 3. Parameter Panel Container
         self.params_container = ctk.CTkFrame(self, corner_radius=10)
-        self.params_container.pack(fill="x", padx=25, pady=10)
+        self.params_container.pack(fill="x", padx=25, pady=5)
 
         # 3A. RS232 Sub-panel
         self.rs232_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
@@ -475,9 +475,9 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.rs232_panel.columnconfigure(1, weight=2)
 
         # COM Port Dropdown and Refresh
-        ctk.CTkLabel(self.rs232_panel, text="COM Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=8)
+        ctk.CTkLabel(self.rs232_panel, text="COM Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=4)
         com_action_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
-        com_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=8)
+        com_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=4)
 
         self.com_dropdown = ctk.CTkOptionMenu(com_action_frame, values=["Scanning..."], width=130)
         self.com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 10))
@@ -485,32 +485,30 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.btn_refresh = ctk.CTkButton(com_action_frame, text="Refresh", width=70, command=self.refresh_com_ports)
         self.btn_refresh.pack(side="right")
 
-        # Baud Rate Dropdown
-        ctk.CTkLabel(self.rs232_panel, text="Baud Rate:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=8)
-        self.baud_dropdown = ctk.CTkOptionMenu(self.rs232_panel, values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"])
+        # Baud Rate & Framing grouped horizontally on a single line
+        ctk.CTkLabel(self.rs232_panel, text="Baud/Frame:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=4)
+        baud_frame_row = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
+        baud_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
+
+        self.baud_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"], width=80)
         self.baud_dropdown.set("9600")
-        self.baud_dropdown.grid(row=1, column=1, sticky="we", padx=15, pady=8)
+        self.baud_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        # Data Bits, Parity & Stop Bits grouped horizontally
-        ctk.CTkLabel(self.rs232_panel, text="Framing:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=2, column=0, sticky="w", padx=15, pady=8)
-        framing_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
-        framing_frame.grid(row=2, column=1, sticky="we", padx=15, pady=8)
-
-        self.databits_dropdown = ctk.CTkOptionMenu(framing_frame, values=["5", "6", "7", "8"], width=50)
+        self.databits_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["5", "6", "7", "8"], width=42)
         self.databits_dropdown.set("8")
-        self.databits_dropdown.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.parity_dropdown = ctk.CTkOptionMenu(framing_frame, values=["None", "Even", "Odd", "Mark", "Space"], width=65)
+        self.parity_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["None", "Even", "Odd", "Mark", "Space"], width=65)
         self.parity_dropdown.set("None")
-        self.parity_dropdown.pack(side="left", expand=True, fill="x", padx=5)
+        self.parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.stopbits_dropdown = ctk.CTkOptionMenu(framing_frame, values=["1", "1.5", "2"], width=45)
+        self.stopbits_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["1", "1.5", "2"], width=42)
         self.stopbits_dropdown.set("1")
-        self.stopbits_dropdown.pack(side="left", expand=True, fill="x", padx=(5, 0))
+        self.stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
-        # Local RS232 Buttons
+        # Local RS232 Buttons (Row 2 now instead of Row 3)
         self.rs232_btn_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
-        self.rs232_btn_frame.grid(row=3, column=0, columnspan=2, pady=(15, 10), sticky="we")
+        self.rs232_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
 
         self.btn_rs232_connect = ctk.CTkButton(
             self.rs232_btn_frame,
@@ -538,21 +536,35 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.tcp_panel.columnconfigure(0, weight=1)
         self.tcp_panel.columnconfigure(1, weight=2)
 
-        # Server Host/IP
-        ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=15)
-        self.ip_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="default ip: 192.168.3.100")
-        self.ip_entry.insert(0, "192.168.3.100")
-        self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=15)
+        # Server Host/IP with same blue UX as COM/dropdowns
+        ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=6)
+        self.ip_entry = ctk.CTkEntry(
+            self.tcp_panel,
+            placeholder_text="e.g. 192.168.1.100",
+            fg_color="#1f538d",
+            border_color="#1f538d",
+            text_color="white",
+            placeholder_text_color="#a3b1c6"
+        )
+        self.ip_entry.insert(0, "127.0.0.1")
+        self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=6)
 
-        # Server Port
-        ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=15)
-        self.port_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="default port: 51236")
-        self.port_entry.insert(0, "51236")
-        self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=15)
+        # Server Port with same blue UX as COM/dropdowns
+        ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=6)
+        self.port_entry = ctk.CTkEntry(
+            self.tcp_panel,
+            placeholder_text="e.g. 5000",
+            fg_color="#1f538d",
+            border_color="#1f538d",
+            text_color="white",
+            placeholder_text_color="#a3b1c6"
+        )
+        self.port_entry.insert(0, "5000")
+        self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=6)
 
-        # Local TCP/IP Buttons
+        # Local TCP/IP Buttons (compact vertical margins)
         self.tcp_btn_frame = ctk.CTkFrame(self.tcp_panel, fg_color="transparent")
-        self.tcp_btn_frame.grid(row=2, column=0, columnspan=2, pady=(15, 10), sticky="we")
+        self.tcp_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
 
         self.btn_tcp_connect = ctk.CTkButton(
             self.tcp_btn_frame,
@@ -580,17 +592,17 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # 4. USB-KBD Wedge Options (Prefix/Suffix)
         wedge_options_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
-        wedge_options_frame.pack(fill="x", padx=25, pady=10)
+        wedge_options_frame.pack(fill="x", padx=25, pady=5)
 
         options_title = ctk.CTkLabel(
             wedge_options_frame,
             text="Wedge Formatting Options (Prefix & Suffix)",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
         )
-        options_title.pack(pady=(10, 5), padx=15, anchor="w")
+        options_title.pack(pady=(6, 3), padx=15, anchor="w")
 
         fields_row = ctk.CTkFrame(wedge_options_frame, fg_color="transparent")
-        fields_row.pack(fill="x", padx=15, pady=5)
+        fields_row.pack(fill="x", padx=15, pady=3)
 
         # Prefix Input
         prefix_cell = ctk.CTkFrame(fields_row, fg_color="transparent")
@@ -618,18 +630,18 @@ class RS232TCPToUSBApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=10, slant="italic"),
             text_color="#888888"
         )
-        tip_label.pack(pady=(0, 10), padx=15, anchor="w")
+        tip_label.pack(pady=(0, 5), padx=15, anchor="w")
 
         # 5. Save Incoming Data to File Options
         save_file_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
-        save_file_frame.pack(fill="x", padx=25, pady=10)
+        save_file_frame.pack(fill="x", padx=25, pady=5)
 
         save_title = ctk.CTkLabel(
             save_file_frame,
             text="Save Incoming Data to File Options",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
         )
-        save_title.pack(pady=(10, 5), padx=15, anchor="w")
+        save_title.pack(pady=(6, 3), padx=15, anchor="w")
 
         # Checkbox for activation
         self.save_to_file_enabled = tk.BooleanVar(value=False)
@@ -640,7 +652,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             command=self.toggle_save_file,
             font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        self.chk_save_file.pack(padx=15, pady=5, anchor="w")
+        self.chk_save_file.pack(padx=15, pady=3, anchor="w")
 
         # File Selection row (hidden until enabled)
         self.file_path_frame = ctk.CTkFrame(save_file_frame, fg_color="transparent")
@@ -651,7 +663,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             state="readonly",
             font=ctk.CTkFont(family="Segoe UI", size=11)
         )
-        self.file_path_entry.pack(side="left", fill="x", expand=True, padx=(15, 10), pady=(0, 10))
+        self.file_path_entry.pack(side="left", fill="x", expand=True, padx=(15, 10), pady=(0, 5))
 
         self.btn_browse = ctk.CTkButton(
             self.file_path_frame,
@@ -661,14 +673,14 @@ class RS232TCPToUSBApp(ctk.CTk):
             height=28,
             font=ctk.CTkFont(family="Segoe UI", size=11)
         )
-        self.btn_browse.pack(side="right", padx=(0, 15), pady=(0, 10))
+        self.btn_browse.pack(side="right", padx=(0, 15), pady=(0, 5))
 
         # 6. Status & Monitor Frame
         monitor_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#111111")
-        monitor_frame.pack(fill="x", padx=25, pady=10)
+        monitor_frame.pack(fill="x", padx=25, pady=5)
 
         monitor_title_row = ctk.CTkFrame(monitor_frame, fg_color="transparent")
-        monitor_title_row.pack(fill="x", padx=15, pady=(10, 2))
+        monitor_title_row.pack(fill="x", padx=15, pady=(6, 2))
 
         monitor_title_lbl = ctk.CTkLabel(
             monitor_title_row,
@@ -686,7 +698,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             command=self.update_monitor_view,
             font=ctk.CTkFont(family="Segoe UI", size=11)
         )
-        self.chk_special.pack(padx=15, pady=5, anchor="w")
+        self.chk_special.pack(padx=15, pady=3, anchor="w")
 
         # Single-line Data Entry Field
         self.monitor_field = ctk.CTkEntry(
@@ -696,11 +708,11 @@ class RS232TCPToUSBApp(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=12),
             text_color="#5cc5e6"
         )
-        self.monitor_field.pack(fill="x", padx=15, pady=(5, 15))
+        self.monitor_field.pack(fill="x", padx=15, pady=(3, 8))
 
         # 6. Controls Section (Buttons & Status Circle)
         controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        controls_frame.pack(fill="x", padx=25, pady=15)
+        controls_frame.pack(fill="x", padx=25, pady=5)
 
         # Status Circle Indicator container (Centered nicely)
         self.status_container = ctk.CTkFrame(controls_frame, fg_color="transparent")
