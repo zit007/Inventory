@@ -7,6 +7,7 @@ import threading
 import queue
 import csv
 import datetime
+import subprocess
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
@@ -39,6 +40,21 @@ try:
     HAS_SERIAL = True
 except Exception:
     HAS_SERIAL = False
+
+# -------------------------------------------------------------
+# COM0COM DRIVER UTILITIES (Windows Virtual Serial Port)
+# -------------------------------------------------------------
+def find_com0com_setupc():
+    """Searches for com0com's setupc.exe utility in common Windows installation paths."""
+    paths = [
+        r"C:\Program Files (x86)\com0com\setupc.exe",
+        r"C:\Program Files\com0com\setupc.exe",
+        "setupc.exe"
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
 
 # -------------------------------------------------------------
 # FILE LOGGING UTILITIES
@@ -511,6 +527,11 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.saved_file_path = ""
         self.log_file_enabled = False
 
+        # com0com Virtual Port installation tracking state
+        self.created_virtual_port_pair = False
+        self.com0com_created_port = None
+        self.com0com_created_pair = None
+
         # Thread-safe sequential wedge queue
         self.wedge_queue = queue.Queue()
         self.wedge_thread = threading.Thread(target=self._wedge_queue_consumer, daemon=True)
@@ -526,12 +547,31 @@ class RS232TCPToUSBApp(ctk.CTk):
         # Bind window close confirmation catcher
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def cleanup_virtual_ports(self):
+        """Cleans up and uninstalls any dynamically created virtual serial port pair using com0com setupc."""
+        if self.created_virtual_port_pair:
+            setupc_path = find_com0com_setupc()
+            if setupc_path:
+                try:
+                    # Remove the dynamically generated virtual serial port pair (no shell=True for absolute security)
+                    cmd = [setupc_path, "remove"]
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                except Exception as e:
+                    print(f"[com0com REMOVE ERROR] {e}")
+                finally:
+                    self.created_virtual_port_pair = False
+
     def on_close(self):
         """Prompt confirmation before exiting the application."""
         if messagebox.askyesno("Exit Confirmation", "Are you sure you want to close the application?\nAny active connection will be disconnected."):
             # Clean up background connection worker
             try:
                 self.worker.stop()
+            except Exception:
+                pass
+            # Clean up and close dynamically generated virtual serial ports on exit
+            try:
+                self.cleanup_virtual_ports()
             except Exception:
                 pass
             self.destroy()
@@ -1194,7 +1234,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             )
 
     def handle_open_com_port(self):
-        """Attempts to open the specified target COM port for data bridging."""
+        """Attempts to generate and open a new virtual COM port pair for data bridging."""
         if not HAS_SERIAL:
             messagebox.showerror("Error", "pyserial is not installed on this system.")
             return
@@ -1214,19 +1254,52 @@ class RS232TCPToUSBApp(ctk.CTk):
         bytesize = self.eth_databits_dropdown.get()
         stopbits = self.eth_stopbits_dropdown.get()
 
-        # Try to open/create the port
+        # Try to find com0com driver setupc.exe utility
+        setupc_path = find_com0com_setupc()
+        pair_port = ""
+
+        if setupc_path:
+            # Derive virtual pair name (e.g. COM15 -> COM16)
+            match = re.search(r'\d+', com_port)
+            if match:
+                num = int(match.group())
+                pair_port = com_port.replace(match.group(), str(num + 1))
+            else:
+                pair_port = com_port + "Pair"
+
+            try:
+                # Dynamically generate/install the new virtual COM port pair using the com0com driver (no shell=True for absolute security)
+                cmd = [setupc_path, "install", f"PortName={com_port}", f"PortName={pair_port}"]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+
+                self.created_virtual_port_pair = True
+                self.com0com_created_port = com_port
+                self.com0com_created_pair = pair_port
+            except Exception as e:
+                print(f"[com0com DRIVER INSTALL ERROR] {e}")
+
+        # Try to open the selected port
         success = self.worker.open_serial_for_bridge(com_port, baud, parity, bytesize, stopbits)
         if success:
             self.btn_open_com.configure(fg_color="#2b7336", hover_color="#1e5225", text="COM Port Opened")
-            # Inform user of successful virtual/loopback initialization on Windows
-            messagebox.showinfo(
-                "COM Port Opened Successfully",
-                f"Virtual COM Port {com_port} was opened successfully in write-mode!\n\n"
-                "💡 Windows virtual serial port tips:\n"
-                "To bridge this data to another local software (e.g. terminal emulator or scan reader), "
-                "create a Virtual Port Pair (e.g. COM10 <-> COM11) using free utilities like 'com0com'. "
-                "Select COM10 here, and select COM11 in your other software!"
-            )
+            if self.created_virtual_port_pair:
+                messagebox.showinfo(
+                    "Virtual COM Port Driver Loaded",
+                    f"Success! Generated a new virtual COM Port Pair:\n"
+                    f"  {com_port} <-> {pair_port}\n\n"
+                    f"The driver has loaded. Any data read on ETH will be bridged to {com_port}.\n"
+                    f"👉 Open {pair_port} in your other software to read the data stream!"
+                )
+            else:
+                # Inform user of successful loopback initialization on Windows
+                messagebox.showinfo(
+                    "COM Port Opened Successfully",
+                    f"Virtual COM Port {com_port} was opened successfully in write-mode!\n\n"
+                    "💡 Windows virtual serial port tips:\n"
+                    "To bridge this data to another local software (e.g. terminal emulator or scan reader), "
+                    "create a Virtual Port Pair (e.g. COM10 <-> COM11) using free utilities like 'com0com'. "
+                    "Select COM10 here, and select COM11 in your other software!"
+                )
         else:
             messagebox.showerror(
                 "Error Opening COM Port",
@@ -1303,6 +1376,10 @@ class RS232TCPToUSBApp(ctk.CTk):
     def handle_disconnect(self):
         """Handles manual disconnection request."""
         self.worker.stop()
+        try:
+            self.cleanup_virtual_ports()
+        except Exception:
+            pass
         self.handle_disconnect_event()
 
     def handle_disconnect_event(self):
