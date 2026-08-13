@@ -4,8 +4,20 @@ import re
 import time
 import socket
 import threading
+import queue
+import csv
+import datetime
+import subprocess
 import tkinter as tk
+from tkinter import messagebox
 import customtkinter as ctk
+
+# Safe Excel Support Importing
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except Exception:
+    HAS_OPENPYXL = False
 
 # Safe Keyboard Driver Importing
 try:
@@ -28,6 +40,69 @@ try:
     HAS_SERIAL = True
 except Exception:
     HAS_SERIAL = False
+
+# -------------------------------------------------------------
+# COM0COM DRIVER UTILITIES (Windows Virtual Serial Port)
+# -------------------------------------------------------------
+def find_com0com_setupc():
+    """Searches for com0com's setupc.exe utility in common Windows installation paths."""
+    paths = [
+        r"C:\Program Files (x86)\com0com\setupc.exe",
+        r"C:\Program Files\com0com\setupc.exe",
+        "setupc.exe"
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+# -------------------------------------------------------------
+# FILE LOGGING UTILITIES
+# -------------------------------------------------------------
+def log_to_txt(filepath, text_value):
+    """Appends raw received text with a simple timestamp prefix to a txt file."""
+    try:
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(f"[{now_str}] {text_value}\n")
+    except Exception as e:
+        print(f"[TXT LOG ERROR] {e}")
+
+def log_to_csv(filepath, text_value):
+    """Appends a structured row with a timestamp and the received value to a CSV file."""
+    try:
+        file_exists = os.path.exists(filepath)
+        with open(filepath, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Received Data"])
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            writer.writerow([now_str, text_value])
+    except Exception as e:
+        print(f"[CSV LOG ERROR] {e}")
+
+def log_to_xlsx(filepath, text_value):
+    """Appends a structured row with a timestamp and the received value to an Excel file."""
+    if not HAS_OPENPYXL:
+        print("[XLSX LOG ERROR] openpyxl package not available, falling back to CSV log style")
+        csv_fallback_path = os.path.splitext(filepath)[0] + "_fallback.csv"
+        log_to_csv(csv_fallback_path, text_value)
+        return
+
+    try:
+        if os.path.exists(filepath):
+            wb = openpyxl.load_workbook(filepath)
+            ws = wb.active
+        else:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(["Timestamp", "Received Data"])
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        ws.append([now_str, text_value])
+        wb.save(filepath)
+    except Exception as e:
+        print(f"[XLSX LOG ERROR] {e}")
 
 # -------------------------------------------------------------
 # CONSTANTS & CONFIGURATION
@@ -185,6 +260,60 @@ class ConnectionWorker:
         )
         self.thread.start()
 
+    def start_eth_rs232(self, eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits):
+        self.running = True
+        self.thread = threading.Thread(
+            target=self._eth_rs232_loop,
+            args=(eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits),
+            daemon=True
+        )
+        self.thread.start()
+
+    def open_serial_for_bridge(self, port, baud, parity, bytesize, stopbits):
+        """Attempts to open the specified serial port for data bridging."""
+        if not HAS_SERIAL:
+            return False
+
+        parity_map = {
+            'None': serial.PARITY_NONE,
+            'Even': serial.PARITY_EVEN,
+            'Odd': serial.PARITY_ODD,
+            'Mark': serial.PARITY_MARK,
+            'Space': serial.PARITY_SPACE
+        }
+        bytesize_map = {
+            '5': serial.FIVEBITS,
+            '6': serial.SIXBITS,
+            '7': serial.SEVENBITS,
+            '8': serial.EIGHTBITS
+        }
+        stopbits_map = {
+            '1': serial.STOPBITS_ONE,
+            '1.5': serial.STOPBITS_ONE_POINT_FIVE,
+            '2': serial.STOPBITS_TWO
+        }
+
+        p_val = parity_map.get(parity, serial.PARITY_NONE)
+        b_val = bytesize_map.get(str(bytesize), serial.EIGHTBITS)
+        s_val = stopbits_map.get(str(stopbits), serial.STOPBITS_ONE)
+
+        try:
+            if self.serial_port and self.serial_port.is_open:
+                self.serial_port.close()
+
+            self.serial_port = serial.Serial(
+                port=port,
+                baudrate=int(baud),
+                parity=p_val,
+                bytesize=b_val,
+                stopbits=s_val,
+                timeout=1.0
+            )
+            return True
+        except Exception as e:
+            print(f"[SERIAL OPEN ERROR] {e}")
+            return False
+
     def stop(self):
         self.running = False
         # Terminate sockets or serial ports to break out of blocking operations
@@ -257,6 +386,87 @@ class ConnectionWorker:
 
         self.app.update_status("DISCONNECTED", "red")
 
+    def _eth_rs232_loop(self, eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits):
+        if not HAS_SERIAL:
+            self.app.update_status("Error: pyserial not installed", "red")
+            self.app.handle_disconnect_event()
+            return
+
+        parity_map = {
+            'None': serial.PARITY_NONE,
+            'Even': serial.PARITY_EVEN,
+            'Odd': serial.PARITY_ODD,
+            'Mark': serial.PARITY_MARK,
+            'Space': serial.PARITY_SPACE
+        }
+        bytesize_map = {
+            '5': serial.FIVEBITS,
+            '6': serial.SIXBITS,
+            '7': serial.SEVENBITS,
+            '8': serial.EIGHTBITS
+        }
+        stopbits_map = {
+            '1': serial.STOPBITS_ONE,
+            '1.5': serial.STOPBITS_ONE_POINT_FIVE,
+            '2': serial.STOPBITS_TWO
+        }
+
+        p_val = parity_map.get(parity, serial.PARITY_NONE)
+        b_val = bytesize_map.get(str(bytesize), serial.EIGHTBITS)
+        s_val = stopbits_map.get(str(stopbits), serial.STOPBITS_ONE)
+
+        while self.running:
+            self.app.update_status(f"CONNECTING to ETH & {serial_port_name}...", "orange")
+            try:
+                # 1. Connect TCP Client
+                self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.tcp_socket.settimeout(2.0)
+                self.tcp_socket.connect((eth_host, int(eth_port)))
+
+                # 2. Open Serial Port if not already pre-opened by user
+                if not (self.serial_port and self.serial_port.is_open and self.serial_port.port == serial_port_name):
+                    self.open_serial_for_bridge(serial_port_name, baud, parity, bytesize, stopbits)
+
+                self.app.update_status("CONNECTED", "green")
+
+                # Receive TCP data and bridge to Serial
+                self.tcp_socket.settimeout(1.0)
+                while self.running:
+                    try:
+                        data = self.tcp_socket.recv(4096)
+                        if not data:
+                            raise socket.error("Connection closed by server")
+
+                        # Forward to Serial
+                        if self.serial_port and self.serial_port.is_open:
+                            self.serial_port.write(data)
+                            self.serial_port.flush()
+
+                        # Update UI / Wedge
+                        self.app.handle_data_received(data)
+                    except socket.timeout:
+                        continue
+            except Exception as e:
+                if not self.running:
+                    break
+                self.app.update_status(f"CONNECTING... (Error: {str(e)[:50]})", "orange")
+
+                # Cleanup connections for next retry
+                if self.tcp_socket:
+                    try:
+                        self.tcp_socket.close()
+                    except Exception:
+                        pass
+                if self.serial_port and self.serial_port.is_open:
+                    try:
+                        self.serial_port.close()
+                    except Exception:
+                        pass
+
+                time.sleep(3)
+
+        self.app.update_status("DISCONNECTED", "red")
+
     def _tcp_loop(self, host, port):
         while self.running:
             self.app.update_status(f"CONNECTING to {host}:{port}...", "orange")
@@ -309,9 +519,62 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.worker = ConnectionWorker(self)
         self.last_received_bytes = b""
 
+        # Thread-safe formatting state
+        self.prefix_value = ""
+        self.suffix_value = ""
+
+        # Thread-safe file logging state
+        self.saved_file_path = ""
+        self.log_file_enabled = False
+
+        # com0com Virtual Port installation tracking state
+        self.created_virtual_port_pair = False
+        self.com0com_created_port = None
+        self.com0com_created_pair = None
+
+        # Thread-safe sequential wedge queue
+        self.wedge_queue = queue.Queue()
+        self.wedge_thread = threading.Thread(target=self._wedge_queue_consumer, daemon=True)
+        self.wedge_thread.start()
+
         # Main layout construction
         self.build_ui()
         self.refresh_com_ports()
+
+        # Initialize thread-safe formatting strings from UI values
+        self.update_wedge_formats()
+
+        # Bind window close confirmation catcher
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def cleanup_virtual_ports(self):
+        """Cleans up and uninstalls any dynamically created virtual serial port pair using com0com setupc."""
+        if self.created_virtual_port_pair:
+            setupc_path = find_com0com_setupc()
+            if setupc_path:
+                try:
+                    # Remove the dynamically generated virtual serial port pair (no shell=True for absolute security)
+                    cmd = [setupc_path, "remove"]
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                except Exception as e:
+                    print(f"[com0com REMOVE ERROR] {e}")
+                finally:
+                    self.created_virtual_port_pair = False
+
+    def on_close(self):
+        """Prompt confirmation before exiting the application."""
+        if messagebox.askyesno("Exit Confirmation", "Are you sure you want to close the application?\nAny active connection will be disconnected."):
+            # Clean up background connection worker
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
+            # Clean up and close dynamically generated virtual serial ports on exit
+            try:
+                self.cleanup_virtual_ports()
+            except Exception:
+                pass
+            self.destroy()
 
     def build_ui(self):
         # 1. Header Frame
@@ -343,41 +606,51 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # 2. Connection Type Selection Frame
         conn_selector_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
-        conn_selector_frame.pack(fill="x", padx=25, pady=10)
+        conn_selector_frame.pack(fill="x", padx=25, pady=5)
 
         conn_label = ctk.CTkLabel(
             conn_selector_frame,
             text="Choose Input Connection Type:",
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold")
         )
-        conn_label.pack(pady=(10, 5), padx=15, anchor="w")
+        conn_label.pack(pady=(8, 4), padx=15, anchor="w")
 
         radio_container = ctk.CTkFrame(conn_selector_frame, fg_color="transparent")
-        radio_container.pack(fill="x", padx=15, pady=(0, 12))
+        radio_container.pack(fill="x", padx=15, pady=(0, 8))
 
         self.radio_rs232 = ctk.CTkRadioButton(
             radio_container,
-            text="RS232 Serial Port",
+            text="RS232",
             variable=self.connection_type,
             value="RS232",
             command=self.toggle_connection_panels,
-            font=ctk.CTkFont(family="Segoe UI", size=13)
+            font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        self.radio_rs232.pack(side="left", expand=True, fill="x", padx=5)
+        self.radio_rs232.pack(side="left", expand=True, fill="x", padx=3)
 
         self.radio_tcp = ctk.CTkRadioButton(
             radio_container,
-            text="TCP/IP Client Connection",
+            text="TCP/IP",
             variable=self.connection_type,
             value="TCP",
             command=self.toggle_connection_panels,
-            font=ctk.CTkFont(family="Segoe UI", size=13)
+            font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        self.radio_tcp.pack(side="left", expand=True, fill="x", padx=5)
+        self.radio_tcp.pack(side="left", expand=True, fill="x", padx=3)
 
-        # 3. Parameter Panel Container
-        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=200)
-        self.params_container.pack(fill="x", padx=25, pady=10)
+        self.radio_eth_rs232 = ctk.CTkRadioButton(
+            radio_container,
+            text="ETH to RS232",
+            variable=self.connection_type,
+            value="ETH_RS232",
+            command=self.toggle_connection_panels,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.radio_eth_rs232.pack(side="left", expand=True, fill="x", padx=3)
+
+        # 3. Parameter Panel Container (fixed height for 100% consistent sizing)
+        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=155)
+        self.params_container.pack(fill="x", padx=25, pady=5)
         self.params_container.pack_propagate(False)
 
         # 3A. RS232 Sub-panel
@@ -388,38 +661,96 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.rs232_panel.columnconfigure(1, weight=2)
 
         # COM Port Dropdown and Refresh
-        ctk.CTkLabel(self.rs232_panel, text="COM Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=8)
+        ctk.CTkLabel(self.rs232_panel, text="COM Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=4)
         com_action_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
-        com_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=8)
+        com_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=4)
 
-        self.com_dropdown = ctk.CTkOptionMenu(com_action_frame, values=["Scanning..."], width=130)
+        self.com_dropdown = ctk.CTkOptionMenu(
+            com_action_frame,
+            values=["Scanning..."],
+            width=130,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
         self.com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         self.btn_refresh = ctk.CTkButton(com_action_frame, text="Refresh", width=70, command=self.refresh_com_ports)
         self.btn_refresh.pack(side="right")
 
-        # Baud Rate Dropdown
-        ctk.CTkLabel(self.rs232_panel, text="Baud Rate:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=8)
-        self.baud_dropdown = ctk.CTkOptionMenu(self.rs232_panel, values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"])
+        # Baud Rate & Framing grouped horizontally on a single line
+        ctk.CTkLabel(self.rs232_panel, text="Baud/Frame:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=4)
+        baud_frame_row = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
+        baud_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
+
+        self.baud_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
+            width=80,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
         self.baud_dropdown.set("9600")
-        self.baud_dropdown.grid(row=1, column=1, sticky="we", padx=15, pady=8)
+        self.baud_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        # Data Bits, Parity & Stop Bits grouped horizontally
-        ctk.CTkLabel(self.rs232_panel, text="Framing:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=2, column=0, sticky="w", padx=15, pady=8)
-        framing_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
-        framing_frame.grid(row=2, column=1, sticky="we", padx=15, pady=8)
-
-        self.databits_dropdown = ctk.CTkOptionMenu(framing_frame, values=["5", "6", "7", "8"], width=50)
+        self.databits_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["5", "6", "7", "8"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
         self.databits_dropdown.set("8")
-        self.databits_dropdown.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.parity_dropdown = ctk.CTkOptionMenu(framing_frame, values=["None", "Even", "Odd", "Mark", "Space"], width=65)
+        self.parity_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["None", "Even", "Odd", "Mark", "Space"],
+            width=65,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
         self.parity_dropdown.set("None")
-        self.parity_dropdown.pack(side="left", expand=True, fill="x", padx=5)
+        self.parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.stopbits_dropdown = ctk.CTkOptionMenu(framing_frame, values=["1", "1.5", "2"], width=45)
+        self.stopbits_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["1", "1.5", "2"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
         self.stopbits_dropdown.set("1")
-        self.stopbits_dropdown.pack(side="left", expand=True, fill="x", padx=(5, 0))
+        self.stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        # Local RS232 Buttons (Row 2 now instead of Row 3)
+        self.rs232_btn_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
+        self.rs232_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
+
+        self.btn_rs232_connect = ctk.CTkButton(
+            self.rs232_btn_frame,
+            text="Connect and Send to USB",
+            command=self.handle_connect,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color="#357ec7",
+            hover_color="#2b6fb5",
+            height=36
+        )
+        self.btn_rs232_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
+
+        self.btn_rs232_disconnect = ctk.CTkButton(
+            self.rs232_btn_frame,
+            text="Disconnect",
+            command=self.handle_disconnect,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color="#7a2a2a",
+            hover_color="#541c1c",
+            height=36
+        )
 
         # 3B. TCP/IP Sub-panel
         self.tcp_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
@@ -443,17 +774,17 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # 4. USB-KBD Wedge Options (Prefix/Suffix)
         wedge_options_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
-        wedge_options_frame.pack(fill="x", padx=25, pady=10)
+        wedge_options_frame.pack(fill="x", padx=25, pady=5)
 
         options_title = ctk.CTkLabel(
             wedge_options_frame,
             text="Wedge Formatting Options (Prefix & Suffix)",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
         )
-        options_title.pack(pady=(10, 5), padx=15, anchor="w")
+        options_title.pack(pady=(6, 3), padx=15, anchor="w")
 
         fields_row = ctk.CTkFrame(wedge_options_frame, fg_color="transparent")
-        fields_row.pack(fill="x", padx=15, pady=5)
+        fields_row.pack(fill="x", padx=15, pady=3)
 
         # Prefix Input
         prefix_cell = ctk.CTkFrame(fields_row, fg_color="transparent")
@@ -461,6 +792,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         ctk.CTkLabel(prefix_cell, text="Prefix (Optional):", font=ctk.CTkFont(family="Segoe UI", size=11)).pack(anchor="w")
         self.prefix_entry = ctk.CTkEntry(prefix_cell, placeholder_text="e.g. [STX] or \\t")
         self.prefix_entry.pack(fill="x", pady=2)
+        self.prefix_entry.bind("<KeyRelease>", self.update_wedge_formats)
+        self.prefix_entry.bind("<FocusOut>", self.update_wedge_formats)
 
         # Suffix Input
         suffix_cell = ctk.CTkFrame(fields_row, fg_color="transparent")
@@ -469,6 +802,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.suffix_entry = ctk.CTkEntry(suffix_cell, placeholder_text="e.g. \\r\\n")
         self.suffix_entry.insert(0, "\\r\\n")
         self.suffix_entry.pack(fill="x", pady=2)
+        self.suffix_entry.bind("<KeyRelease>", self.update_wedge_formats)
+        self.suffix_entry.bind("<FocusOut>", self.update_wedge_formats)
 
         # Tip label for escape sequences and special tags
         tip_label = ctk.CTkLabel(
@@ -477,14 +812,57 @@ class RS232TCPToUSBApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=10, slant="italic"),
             text_color="#888888"
         )
-        tip_label.pack(pady=(0, 10), padx=15, anchor="w")
+        tip_label.pack(pady=(0, 5), padx=15, anchor="w")
 
-        # 5. Status & Monitor Frame
+        # 5. Save Incoming Data to File Options
+        save_file_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
+        save_file_frame.pack(fill="x", padx=25, pady=5)
+
+        save_title = ctk.CTkLabel(
+            save_file_frame,
+            text="Save Incoming Data to File Options",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        save_title.pack(pady=(6, 3), padx=15, anchor="w")
+
+        # Checkbox for activation
+        self.save_to_file_enabled = tk.BooleanVar(value=False)
+        self.chk_save_file = ctk.CTkCheckBox(
+            save_file_frame,
+            text="Enable Logging to File",
+            variable=self.save_to_file_enabled,
+            command=self.toggle_save_file,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.chk_save_file.pack(padx=15, pady=3, anchor="w")
+
+        # File Selection row (hidden until enabled)
+        self.file_path_frame = ctk.CTkFrame(save_file_frame, fg_color="transparent")
+
+        self.file_path_entry = ctk.CTkEntry(
+            self.file_path_frame,
+            placeholder_text="No file selected...",
+            state="readonly",
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        self.file_path_entry.pack(side="left", fill="x", expand=True, padx=(15, 10), pady=(0, 5))
+
+        self.btn_browse = ctk.CTkButton(
+            self.file_path_frame,
+            text="Browse",
+            command=self.browse_save_file,
+            width=80,
+            height=28,
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        self.btn_browse.pack(side="right", padx=(0, 15), pady=(0, 5))
+
+        # 6. Status & Monitor Frame
         monitor_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#111111")
-        monitor_frame.pack(fill="x", padx=25, pady=10)
+        monitor_frame.pack(fill="x", padx=25, pady=5)
 
         monitor_title_row = ctk.CTkFrame(monitor_frame, fg_color="transparent")
-        monitor_title_row.pack(fill="x", padx=15, pady=(10, 2))
+        monitor_title_row.pack(fill="x", padx=15, pady=(6, 2))
 
         monitor_title_lbl = ctk.CTkLabel(
             monitor_title_row,
@@ -502,7 +880,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             command=self.update_monitor_view,
             font=ctk.CTkFont(family="Segoe UI", size=11)
         )
-        self.chk_special.pack(padx=15, pady=5, anchor="w")
+        self.chk_special.pack(padx=15, pady=3, anchor="w")
 
         # Single-line Data Entry Field
         self.monitor_field = ctk.CTkEntry(
@@ -512,44 +890,15 @@ class RS232TCPToUSBApp(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=12),
             text_color="#5cc5e6"
         )
-        self.monitor_field.pack(fill="x", padx=15, pady=(5, 15))
+        self.monitor_field.pack(fill="x", padx=15, pady=(3, 8))
 
         # 6. Controls Section (Buttons & Status Circle)
         controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        controls_frame.pack(fill="x", padx=25, pady=15)
+        controls_frame.pack(fill="x", padx=25, pady=5)
 
-        # Action Buttons container (Left)
-        buttons_box = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        buttons_box.pack(side="left")
-
-        self.btn_connect = ctk.CTkButton(
-            buttons_box,
-            text="Connect and Send to USB",
-            command=self.handle_connect,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            fg_color="#2b7336",
-            hover_color="#1e5225",
-            width=190,
-            height=40
-        )
-        self.btn_connect.pack(side="left", padx=(0, 10))
-
-        self.btn_disconnect = ctk.CTkButton(
-            buttons_box,
-            text="Disconnect",
-            command=self.handle_disconnect,
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            state="disabled",
-            fg_color="#7a2a2a",
-            hover_color="#541c1c",
-            width=110,
-            height=40
-        )
-        self.btn_disconnect.pack(side="left")
-
-        # Status Circle Indicator container (Right)
+        # Status Circle Indicator container (Centered nicely)
         self.status_container = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        self.status_container.pack(side="right", fill="y")
+        self.status_container.pack(anchor="center", pady=5)
 
         # Small status canvas to draw a colored dot
         self.status_canvas = tk.Canvas(self.status_container, width=20, height=20, bg="#1a1a1a", highlightthickness=0)
@@ -568,31 +917,49 @@ class RS232TCPToUSBApp(ctk.CTk):
     # CONTROL LOGIC / ACTIONS
     # -------------------------------------------------------------
     def toggle_connection_panels(self):
-        """Switches between showing the RS232 panel and the TCP panel."""
+        """Switches between showing the RS232 panel, the TCP panel, and the ETH to RS232 panel."""
         choice = self.connection_type.get()
         if choice == "RS232":
             self.tcp_panel.pack_forget()
-            self.rs232_panel.pack(fill="both", expand=True, padx=10, pady=10)
+            self.eth_rs232_panel.pack_forget()
+            self.rs232_panel.pack(fill="both", expand=True, padx=10, pady=5)
+        elif choice == "TCP":
+            self.rs232_panel.pack_forget()
+            self.eth_rs232_panel.pack_forget()
+            self.tcp_panel.pack(fill="both", expand=True, padx=10, pady=5)
         else:
             self.rs232_panel.pack_forget()
-            self.tcp_panel.pack(fill="both", expand=True, padx=10, pady=10)
+            self.tcp_panel.pack_forget()
+            self.eth_rs232_panel.pack(fill="both", expand=True, padx=10, pady=5)
 
     def refresh_com_ports(self):
         """Scans the operating system for available COM ports."""
         if not HAS_SERIAL:
-            self.com_dropdown.configure(values=["No COM Driver"])
-            self.com_dropdown.set("No COM Driver")
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=["No COM Driver"])
+                    dropdown.set("No COM Driver")
+                except Exception:
+                    pass
             return
 
         ports = [p.device for p in serial.tools.list_ports.comports()]
         if ports:
             # Sort ports naturally (COM1, COM2, etc.)
             ports.sort(key=lambda x: [int(c) if c.isdigit() else c for c in re.split(r'(\d+)', x)])
-            self.com_dropdown.configure(values=ports)
-            self.com_dropdown.set(ports[0])
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=ports)
+                    dropdown.set(ports[0])
+                except Exception:
+                    pass
         else:
-            self.com_dropdown.configure(values=["No COM Ports Found"])
-            self.com_dropdown.set("No COM Ports Found")
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=["No COM Ports Found"])
+                    dropdown.set("No COM Ports Found")
+                except Exception:
+                    pass
 
     def update_status(self, text, color):
         """Thread-safe UI status updater."""
@@ -608,6 +975,169 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         self.status_canvas.itemconfig(self.status_dot, fill=hex_color)
         self.status_text_lbl.configure(text=text, text_color=hex_color)
+
+        conn_mode = self.connection_type.get()
+
+        if color == "green":
+            # Successful connection
+            if conn_mode == "RS232":
+                self.btn_rs232_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            elif conn_mode == "TCP":
+                self.btn_tcp_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_eth_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_eth_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+        elif color == "orange":
+            # Connecting state
+            if conn_mode == "RS232":
+                self.btn_rs232_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            elif conn_mode == "TCP":
+                self.btn_tcp_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_eth_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_eth_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+        else:
+            # Disconnected or Error state. Restore all three to original.
+            self.btn_rs232_connect.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Connect and Send to USB",
+                state="normal"
+            )
+            self.btn_rs232_disconnect.pack_forget()
+
+            self.btn_tcp_connect.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Connect and Send to USB",
+                state="normal"
+            )
+            self.btn_tcp_disconnect.pack_forget()
+
+            self.btn_eth_connect.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Connect and Send",
+                state="normal"
+            )
+            self.btn_eth_disconnect.pack_forget()
+
+            # Reset open COM port button on disconnected
+            self.btn_open_com.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Open COM port",
+                state="normal"
+            )
+
+    def handle_open_com_port(self):
+        """Attempts to generate and open a new virtual COM port pair for data bridging."""
+        if not HAS_SERIAL:
+            messagebox.showerror("Error", "pyserial is not installed on this system.")
+            return
+
+        com_port = self.eth_com_dropdown.get().strip()
+        if com_port in ("No COM Ports Found", "No COM Driver", "Scanning...", ""):
+            messagebox.showerror("Error", "Please enter or select a valid COM Port name.")
+            return
+
+        # If already open, let the user know
+        if self.worker.serial_port and self.worker.serial_port.is_open:
+            messagebox.showinfo("Already Open", f"COM Port {com_port} is already open!")
+            return
+
+        baud = self.eth_baud_dropdown.get()
+        parity = self.eth_parity_dropdown.get()
+        bytesize = self.eth_databits_dropdown.get()
+        stopbits = self.eth_stopbits_dropdown.get()
+
+        # Try to find com0com driver setupc.exe utility
+        setupc_path = find_com0com_setupc()
+        pair_port = ""
+
+        if setupc_path:
+            # Derive virtual pair name (e.g. COM15 -> COM16)
+            match = re.search(r'\d+', com_port)
+            if match:
+                num = int(match.group())
+                pair_port = com_port.replace(match.group(), str(num + 1))
+            else:
+                pair_port = com_port + "Pair"
+
+            try:
+                # Dynamically generate/install the new virtual COM port pair using the com0com driver (no shell=True for absolute security)
+                cmd = [setupc_path, "install", f"PortName={com_port}", f"PortName={pair_port}"]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+
+                self.created_virtual_port_pair = True
+                self.com0com_created_port = com_port
+                self.com0com_created_pair = pair_port
+            except Exception as e:
+                print(f"[com0com DRIVER INSTALL ERROR] {e}")
+
+        # Try to open the selected port
+        success = self.worker.open_serial_for_bridge(com_port, baud, parity, bytesize, stopbits)
+        if success:
+            self.btn_open_com.configure(fg_color="#2b7336", hover_color="#1e5225", text="COM Port Opened")
+            if self.created_virtual_port_pair:
+                messagebox.showinfo(
+                    "Virtual COM Port Driver Loaded",
+                    f"Success! Generated a new virtual COM Port Pair:\n"
+                    f"  {com_port} <-> {pair_port}\n\n"
+                    f"The driver has loaded. Any data read on ETH will be bridged to {com_port}.\n"
+                    f"👉 Open {pair_port} in your other software to read the data stream!"
+                )
+            else:
+                # Inform user of successful loopback initialization on Windows
+                messagebox.showinfo(
+                    "COM Port Opened Successfully",
+                    f"Virtual COM Port {com_port} was opened successfully in write-mode!\n\n"
+                    "💡 Windows virtual serial port tips:\n"
+                    "To bridge this data to another local software (e.g. terminal emulator or scan reader), "
+                    "create a Virtual Port Pair (e.g. COM10 <-> COM11) using free utilities like 'com0com'. "
+                    "Select COM10 here, and select COM11 in your other software!"
+                )
+        else:
+            messagebox.showerror(
+                "Error Opening COM Port",
+                f"Failed to open COM Port {com_port}.\n"
+                "Ensure the port is not already in use by another program, "
+                "or that a valid hardware/virtual loopback device is installed."
+            )
 
     def handle_connect(self):
         """Handles connection action, validating input parameters and launching threads."""
@@ -629,7 +1159,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             stopbits = self.stopbits_dropdown.get()
 
             self.worker.start_rs232(port, baud, parity, bytesize, stopbits)
-        else:
+        elif conn_mode == "TCP":
             host = self.ip_entry.get().strip()
             port = self.port_entry.get().strip()
             if not host or not port:
@@ -645,10 +1175,42 @@ class RS232TCPToUSBApp(ctk.CTk):
                 return
 
             self.worker.start_tcp(host, port)
+        else:
+            eth_host = self.eth_ip_entry.get().strip()
+            eth_port = self.eth_port_entry.get().strip()
+            com_port = self.eth_com_dropdown.get()
+
+            if not eth_host or not eth_port:
+                self.update_status("Error: Missing ETH IP/Port", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            try:
+                int(eth_port)
+            except ValueError:
+                self.update_status("Error: Invalid ETH Port", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            if com_port in ("No COM Ports Found", "No COM Driver", "Scanning..."):
+                self.update_status("Error: No COM Port selected", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            baud = self.eth_baud_dropdown.get()
+            parity = self.eth_parity_dropdown.get()
+            bytesize = self.eth_databits_dropdown.get()
+            stopbits = self.eth_stopbits_dropdown.get()
+
+            self.worker.start_eth_rs232(eth_host, eth_port, com_port, baud, parity, bytesize, stopbits)
 
     def handle_disconnect(self):
         """Handles manual disconnection request."""
         self.worker.stop()
+        try:
+            self.cleanup_virtual_ports()
+        except Exception:
+            pass
         self.handle_disconnect_event()
 
     def handle_disconnect_event(self):
@@ -660,6 +1222,7 @@ class RS232TCPToUSBApp(ctk.CTk):
         """Toggles configuration elements enabled/disabled depending on active state."""
         self.radio_rs232.configure(state=state)
         self.radio_tcp.configure(state=state)
+        self.radio_eth_rs232.configure(state=state)
         self.btn_refresh.configure(state=state)
         self.com_dropdown.configure(state=state)
         self.baud_dropdown.configure(state=state)
@@ -669,12 +1232,124 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.ip_entry.configure(state=state)
         self.port_entry.configure(state=state)
 
-        if state == "disabled":
-            self.btn_connect.configure(state="disabled", fg_color="#444444")
-            self.btn_disconnect.configure(state="normal")
+        # New ETH to RS232 fields
+        self.eth_ip_entry.configure(state=state)
+        self.eth_port_entry.configure(state=state)
+        self.eth_com_dropdown.configure(state=state)
+        self.eth_baud_dropdown.configure(state=state)
+        self.eth_databits_dropdown.configure(state=state)
+        self.eth_parity_dropdown.configure(state=state)
+        self.eth_stopbits_dropdown.configure(state=state)
+        self.btn_open_com.configure(state=state)
+
+    def toggle_save_file(self):
+        """Called when user toggles 'Enable Logging to File' checkbox."""
+        if self.save_to_file_enabled.get():
+            # Force disconnect if active
+            if self.worker.running:
+                messagebox.showwarning("Must disconnect first", "Must disconnect before saving to file")
+                self.handle_disconnect()
+
+            # Show file path selection row
+            self.file_path_frame.pack(fill="x", pady=(0, 5))
+            # If no file path is set, automatically trigger Browse dialog
+            if not self.saved_file_path:
+                self.browse_save_file()
         else:
-            self.btn_connect.configure(state="normal", fg_color="#2b7336")
-            self.btn_disconnect.configure(state="disabled")
+            self.file_path_frame.pack_forget()
+        self.update_wedge_formats()
+
+    def browse_save_file(self):
+        """Opens file dialog with the same modern UX and sets file path."""
+        # Force disconnect if active
+        if self.worker.running:
+            messagebox.showwarning("Must disconnect first", "Must disconnect before saving to file")
+            self.handle_disconnect()
+
+        from tkinter import filedialog
+
+        # File types: CSV is default, but TXT and XLSX are also supported.
+        filetypes = [
+            ("CSV files (*.csv)", "*.csv"),
+            ("Text files (*.txt)", "*.txt"),
+            ("Excel files (*.xlsx)", "*.xlsx"),
+            ("All files (*.*)", "*.*")
+        ]
+
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Select Output Log File",
+            defaultextension=".csv",
+            filetypes=filetypes
+        )
+
+        if path:
+            self.saved_file_path = path
+            # Update read-only entry field
+            self.file_path_entry.configure(state="normal")
+            self.file_path_entry.delete(0, "end")
+            self.file_path_entry.insert(0, path)
+            self.file_path_entry.configure(state="readonly")
+
+            # Make sure checkbox is checked if a file was successfully browsed
+            self.save_to_file_enabled.set(True)
+            self.file_path_frame.pack(fill="x", pady=(0, 5))
+        else:
+            # If user cancelled and there's no path, uncheck the box and hide frame
+            if not self.saved_file_path:
+                self.save_to_file_enabled.set(False)
+                self.file_path_frame.pack_forget()
+
+        self.update_wedge_formats()
+
+    def update_wedge_formats(self, event=None):
+        """Thread-safely reads values from Prefix and Suffix entries on the main thread."""
+        try:
+            self.prefix_value = self.prefix_entry.get()
+        except Exception:
+            self.prefix_value = ""
+
+        try:
+            self.suffix_value = self.suffix_entry.get()
+        except Exception:
+            self.suffix_value = ""
+
+        try:
+            self.log_file_enabled = self.save_to_file_enabled.get()
+        except Exception:
+            self.log_file_enabled = False
+
+    def _wedge_queue_consumer(self):
+        """Dedicated background thread loop that sequentializes keyboard wedge typing."""
+        while True:
+            try:
+                # Wait for the next item in the queue
+                raw_data_str, prefix_val, suffix_val, log_enabled, log_path = self.wedge_queue.get()
+
+                # 1. Simulate Prefix
+                if prefix_val:
+                    parse_and_simulate(prefix_val)
+
+                # 2. Simulate Raw Received Data (no strip/clean as requested)
+                simulate_keyboard_chars(raw_data_str)
+
+                # 3. Simulate Suffix
+                if suffix_val:
+                    parse_and_simulate(suffix_val)
+
+                # 4. Log to File if active
+                if log_enabled and log_path:
+                    ext = os.path.splitext(log_path)[1].lower()
+                    if ext == ".xlsx":
+                        log_to_xlsx(log_path, raw_data_str)
+                    elif ext == ".csv":
+                        log_to_csv(log_path, raw_data_str)
+                    else:
+                        log_to_txt(log_path, raw_data_str)
+
+                self.wedge_queue.task_done()
+            except Exception as e:
+                print(f"[WEDGE ERROR] {e}")
 
     def handle_data_received(self, data_bytes):
         """Callback triggered on worker thread upon receiving raw byte packet."""
@@ -686,28 +1361,11 @@ class RS232TCPToUSBApp(ctk.CTk):
         except Exception:
             text = data_bytes.decode('latin-1', errors='replace')
 
-        # Run keyboard wedge emulations asynchronously to keep connection looping fast
-        wedge_thread = threading.Thread(target=self._run_keyboard_wedge, args=(text,), daemon=True)
-        wedge_thread.start()
+        # Enqueue the text along with thread-safe snapshots of prefix/suffix and logging options
+        self.wedge_queue.put((text, self.prefix_value, self.suffix_value, self.log_file_enabled, self.saved_file_path))
 
         # Update monitor UI thread-safely
         self.after(0, self.update_monitor_view)
-
-    def _run_keyboard_wedge(self, raw_data_str):
-        """Executes full keyboard wedge formatting: prefix + raw payload + suffix."""
-        prefix_val = self.prefix_entry.get()
-        suffix_val = self.suffix_entry.get()
-
-        # 1. Simulate Prefix
-        if prefix_val:
-            parse_and_simulate(prefix_val)
-
-        # 2. Simulate Raw Received Data (no strip/clean as requested)
-        simulate_keyboard_chars(raw_data_str)
-
-        # 3. Simulate Suffix
-        if suffix_val:
-            parse_and_simulate(suffix_val)
 
     def update_monitor_view(self):
         """Updates monitor view textbox in accordance with show_special_chars checkbox."""

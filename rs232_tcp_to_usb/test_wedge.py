@@ -1,8 +1,24 @@
 import unittest
+import os
+import tempfile
+import csv
 from unittest.mock import MagicMock, patch
-from rs232_tcp_to_usb.main import format_received_data, parse_and_simulate, simulate_keyboard_chars
+from rs232_tcp_to_usb.main import (
+    format_received_data,
+    parse_and_simulate,
+    simulate_keyboard_chars,
+    log_to_txt,
+    log_to_csv,
+    log_to_xlsx
+)
 
 class TestKeyboardWedgeLogic(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.test_dir.cleanup()
+
     def test_format_received_data_no_special(self):
         # Raw printing should return string as is when show_special is False
         self.assertEqual(format_received_data("Hello\r\nWorld\t", False), "Hello\r\nWorld\t")
@@ -37,6 +53,26 @@ class TestKeyboardWedgeLogic(unittest.TestCase):
         # trigger_key with "enter" should be called exactly once
         enter_calls = [call for call in mock_trigger_key.call_args_list if call[0][0] == 'enter']
         self.assertEqual(len(enter_calls), 1)
+
+    def test_log_to_txt(self):
+        # Verify that logging to text file creates the file and appends content
+        filepath = os.path.join(self.test_dir.name, "log.txt")
+        log_to_txt(filepath, "Test Raw Data 123")
+        self.assertTrue(os.path.exists(filepath))
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("Test Raw Data 123", content)
+
+    def test_log_to_csv(self):
+        # Verify that logging to CSV file creates headers and appends rows
+        filepath = os.path.join(self.test_dir.name, "log.csv")
+        log_to_csv(filepath, "Payload ABC")
+        self.assertTrue(os.path.exists(filepath))
+        with open(filepath, "r", newline="", encoding="utf-8") as f:
+            reader = list(csv.reader(f))
+        self.assertEqual(len(reader), 2)  # Headers row + 1 data row
+        self.assertEqual(reader[0], ["Timestamp", "Received Data"])
+        self.assertEqual(reader[1][1], "Payload ABC")
 
 if __name__ == '__main__':
     unittest.main()
