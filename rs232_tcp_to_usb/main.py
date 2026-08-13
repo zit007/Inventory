@@ -253,6 +253,51 @@ class ConnectionWorker:
         )
         self.thread.start()
 
+    def open_serial_for_bridge(self, port, baud, parity, bytesize, stopbits):
+        """Attempts to open the specified serial port for data bridging."""
+        if not HAS_SERIAL:
+            return False
+
+        parity_map = {
+            'None': serial.PARITY_NONE,
+            'Even': serial.PARITY_EVEN,
+            'Odd': serial.PARITY_ODD,
+            'Mark': serial.PARITY_MARK,
+            'Space': serial.PARITY_SPACE
+        }
+        bytesize_map = {
+            '5': serial.FIVEBITS,
+            '6': serial.SIXBITS,
+            '7': serial.SEVENBITS,
+            '8': serial.EIGHTBITS
+        }
+        stopbits_map = {
+            '1': serial.STOPBITS_ONE,
+            '1.5': serial.STOPBITS_ONE_POINT_FIVE,
+            '2': serial.STOPBITS_TWO
+        }
+
+        p_val = parity_map.get(parity, serial.PARITY_NONE)
+        b_val = bytesize_map.get(str(bytesize), serial.EIGHTBITS)
+        s_val = stopbits_map.get(str(stopbits), serial.STOPBITS_ONE)
+
+        try:
+            if self.serial_port and self.serial_port.is_open:
+                self.serial_port.close()
+
+            self.serial_port = serial.Serial(
+                port=port,
+                baudrate=int(baud),
+                parity=p_val,
+                bytesize=b_val,
+                stopbits=s_val,
+                timeout=1.0
+            )
+            return True
+        except Exception as e:
+            print(f"[SERIAL OPEN ERROR] {e}")
+            return False
+
     def stop(self):
         self.running = False
         # Terminate sockets or serial ports to break out of blocking operations
@@ -362,15 +407,9 @@ class ConnectionWorker:
                 self.tcp_socket.settimeout(2.0)
                 self.tcp_socket.connect((eth_host, int(eth_port)))
 
-                # 2. Open Serial Port
-                self.serial_port = serial.Serial(
-                    port=serial_port_name,
-                    baudrate=int(baud),
-                    parity=p_val,
-                    bytesize=b_val,
-                    stopbits=s_val,
-                    timeout=1.0
-                )
+                # 2. Open Serial Port if not already pre-opened by user
+                if not (self.serial_port and self.serial_port.is_open and self.serial_port.port == serial_port_name):
+                    self.open_serial_for_bridge(serial_port_name, baud, parity, bytesize, stopbits)
 
                 self.app.update_status("CONNECTED", "green")
 
@@ -570,7 +609,7 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.radio_eth_rs232.pack(side="left", expand=True, fill="x", padx=3)
 
         # 3. Parameter Panel Container (fixed height for 100% consistent sizing)
-        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=150)
+        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=155)
         self.params_container.pack(fill="x", padx=25, pady=5)
         self.params_container.pack_propagate(False)
 
@@ -768,11 +807,12 @@ class RS232TCPToUSBApp(ctk.CTk):
         eth_frame_row = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
         eth_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
 
-        self.eth_com_dropdown = ctk.CTkOptionMenu(
+        self.eth_com_dropdown = ctk.CTkComboBox(
             eth_frame_row,
             values=["Scanning..."],
             width=80,
             fg_color="#357ec7",
+            border_color="#357ec7",
             button_color="#1f538d",
             button_hover_color="#14375e"
         )
@@ -826,22 +866,33 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.eth_btn_frame = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
         self.eth_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
 
-        self.btn_eth_connect = ctk.CTkButton(
+        self.btn_open_com = ctk.CTkButton(
             self.eth_btn_frame,
-            text="Connect and Send to USB",
-            command=self.handle_connect,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text="Open COM port",
+            command=self.handle_open_com_port,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             fg_color="#357ec7",
             hover_color="#2b6fb5",
             height=36
         )
-        self.btn_eth_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
+        self.btn_open_com.pack(side="left", fill="x", expand=True, padx=(15, 5))
+
+        self.btn_eth_connect = ctk.CTkButton(
+            self.eth_btn_frame,
+            text="Connect and Send",
+            command=self.handle_connect,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#357ec7",
+            hover_color="#2b6fb5",
+            height=36
+        )
+        self.btn_eth_connect.pack(side="left", fill="x", expand=True, padx=(5, 15))
 
         self.btn_eth_disconnect = ctk.CTkButton(
             self.eth_btn_frame,
             text="Disconnect",
             command=self.handle_disconnect,
-            font=ctk.CTkFont(family="Segoe UI", size=13),
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             fg_color="#7a2a2a",
             hover_color="#541c1c",
             height=36
@@ -1129,10 +1180,60 @@ class RS232TCPToUSBApp(ctk.CTk):
             self.btn_eth_connect.configure(
                 fg_color="#357ec7",
                 hover_color="#2b6fb5",
-                text="Connect and Send to USB",
+                text="Connect and Send",
                 state="normal"
             )
             self.btn_eth_disconnect.pack_forget()
+
+            # Reset open COM port button on disconnected
+            self.btn_open_com.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Open COM port",
+                state="normal"
+            )
+
+    def handle_open_com_port(self):
+        """Attempts to open the specified target COM port for data bridging."""
+        if not HAS_SERIAL:
+            messagebox.showerror("Error", "pyserial is not installed on this system.")
+            return
+
+        com_port = self.eth_com_dropdown.get().strip()
+        if com_port in ("No COM Ports Found", "No COM Driver", "Scanning...", ""):
+            messagebox.showerror("Error", "Please enter or select a valid COM Port name.")
+            return
+
+        # If already open, let the user know
+        if self.worker.serial_port and self.worker.serial_port.is_open:
+            messagebox.showinfo("Already Open", f"COM Port {com_port} is already open!")
+            return
+
+        baud = self.eth_baud_dropdown.get()
+        parity = self.eth_parity_dropdown.get()
+        bytesize = self.eth_databits_dropdown.get()
+        stopbits = self.eth_stopbits_dropdown.get()
+
+        # Try to open/create the port
+        success = self.worker.open_serial_for_bridge(com_port, baud, parity, bytesize, stopbits)
+        if success:
+            self.btn_open_com.configure(fg_color="#2b7336", hover_color="#1e5225", text="COM Port Opened")
+            # Inform user of successful virtual/loopback initialization on Windows
+            messagebox.showinfo(
+                "COM Port Opened Successfully",
+                f"Virtual COM Port {com_port} was opened successfully in write-mode!\n\n"
+                "💡 Windows virtual serial port tips:\n"
+                "To bridge this data to another local software (e.g. terminal emulator or scan reader), "
+                "create a Virtual Port Pair (e.g. COM10 <-> COM11) using free utilities like 'com0com'. "
+                "Select COM10 here, and select COM11 in your other software!"
+            )
+        else:
+            messagebox.showerror(
+                "Error Opening COM Port",
+                f"Failed to open COM Port {com_port}.\n"
+                "Ensure the port is not already in use by another program, "
+                "or that a valid hardware/virtual loopback device is installed."
+            )
 
     def handle_connect(self):
         """Handles connection action, validating input parameters and launching threads."""
@@ -1231,6 +1332,7 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.eth_databits_dropdown.configure(state=state)
         self.eth_parity_dropdown.configure(state=state)
         self.eth_stopbits_dropdown.configure(state=state)
+        self.btn_open_com.configure(state=state)
 
     def toggle_save_file(self):
         """Called when user toggles 'Enable Logging to File' checkbox."""
