@@ -463,9 +463,10 @@ class RS232TCPToUSBApp(ctk.CTk):
         )
         self.radio_tcp.pack(side="left", expand=True, fill="x", padx=5)
 
-        # 3. Parameter Panel Container
-        self.params_container = ctk.CTkFrame(self, corner_radius=10)
+        # 3. Parameter Panel Container (fixed height for 100% consistent sizing)
+        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=145)
         self.params_container.pack(fill="x", padx=25, pady=5)
+        self.params_container.pack_propagate(False)
 
         # 3A. RS232 Sub-panel
         self.rs232_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
@@ -479,7 +480,14 @@ class RS232TCPToUSBApp(ctk.CTk):
         com_action_frame = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
         com_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=4)
 
-        self.com_dropdown = ctk.CTkOptionMenu(com_action_frame, values=["Scanning..."], width=130)
+        self.com_dropdown = ctk.CTkOptionMenu(
+            com_action_frame,
+            values=["Scanning..."],
+            width=130,
+            fg_color="#357ec7",
+            button_color="#357ec7",
+            button_hover_color="#2b6fb5"
+        )
         self.com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         self.btn_refresh = ctk.CTkButton(com_action_frame, text="Refresh", width=70, command=self.refresh_com_ports)
@@ -490,19 +498,47 @@ class RS232TCPToUSBApp(ctk.CTk):
         baud_frame_row = ctk.CTkFrame(self.rs232_panel, fg_color="transparent")
         baud_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
 
-        self.baud_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"], width=80)
+        self.baud_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
+            width=80,
+            fg_color="#357ec7",
+            button_color="#357ec7",
+            button_hover_color="#2b6fb5"
+        )
         self.baud_dropdown.set("9600")
         self.baud_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        self.databits_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["5", "6", "7", "8"], width=42)
+        self.databits_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["5", "6", "7", "8"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#357ec7",
+            button_hover_color="#2b6fb5"
+        )
         self.databits_dropdown.set("8")
         self.databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.parity_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["None", "Even", "Odd", "Mark", "Space"], width=65)
+        self.parity_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["None", "Even", "Odd", "Mark", "Space"],
+            width=65,
+            fg_color="#357ec7",
+            button_color="#357ec7",
+            button_hover_color="#2b6fb5"
+        )
         self.parity_dropdown.set("None")
         self.parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
 
-        self.stopbits_dropdown = ctk.CTkOptionMenu(baud_frame_row, values=["1", "1.5", "2"], width=42)
+        self.stopbits_dropdown = ctk.CTkOptionMenu(
+            baud_frame_row,
+            values=["1", "1.5", "2"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#357ec7",
+            button_hover_color="#2b6fb5"
+        )
         self.stopbits_dropdown.set("1")
         self.stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
@@ -515,8 +551,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             text="Connect and Send to USB",
             command=self.handle_connect,
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            fg_color="#1f538d",
-            hover_color="#14375e",
+            fg_color="#357ec7",
+            hover_color="#2b6fb5",
             height=36
         )
         self.btn_rs232_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
@@ -536,28 +572,28 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.tcp_panel.columnconfigure(0, weight=1)
         self.tcp_panel.columnconfigure(1, weight=2)
 
-        # Server Host/IP with same blue UX as COM/dropdowns
+        # Server Host/IP with same lighter blue UX
         ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=6)
         self.ip_entry = ctk.CTkEntry(
             self.tcp_panel,
             placeholder_text="e.g. 192.168.1.100",
-            fg_color="#1f538d",
-            border_color="#1f538d",
+            fg_color="#357ec7",
+            border_color="#357ec7",
             text_color="white",
-            placeholder_text_color="#a3b1c6"
+            placeholder_text_color="#e0e8f5"
         )
         self.ip_entry.insert(0, "127.0.0.1")
         self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=6)
 
-        # Server Port with same blue UX as COM/dropdowns
+        # Server Port with same lighter blue UX
         ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=6)
         self.port_entry = ctk.CTkEntry(
             self.tcp_panel,
             placeholder_text="e.g. 5000",
-            fg_color="#1f538d",
-            border_color="#1f538d",
+            fg_color="#357ec7",
+            border_color="#357ec7",
             text_color="white",
-            placeholder_text_color="#a3b1c6"
+            placeholder_text_color="#e0e8f5"
         )
         self.port_entry.insert(0, "5000")
         self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=6)
@@ -571,8 +607,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             text="Connect and Send to USB",
             command=self.handle_connect,
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            fg_color="#1f538d",
-            hover_color="#14375e",
+            fg_color="#357ec7",
+            hover_color="#2b6fb5",
             height=36
         )
         self.btn_tcp_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
@@ -817,16 +853,16 @@ class RS232TCPToUSBApp(ctk.CTk):
         else:
             # Disconnected or Error state. Restore both to original.
             self.btn_rs232_connect.configure(
-                fg_color="#1f538d",
-                hover_color="#14375e",
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
                 text="Connect and Send to USB",
                 state="normal"
             )
             self.btn_rs232_disconnect.pack_forget()
 
             self.btn_tcp_connect.configure(
-                fg_color="#1f538d",
-                hover_color="#14375e",
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
                 text="Connect and Send to USB",
                 state="normal"
             )
