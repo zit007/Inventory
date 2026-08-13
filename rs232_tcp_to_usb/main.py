@@ -5,9 +5,18 @@ import time
 import socket
 import threading
 import queue
+import csv
+import datetime
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
+
+# Safe Excel Support Importing
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except Exception:
+    HAS_OPENPYXL = False
 
 # Safe Keyboard Driver Importing
 try:
@@ -30,6 +39,54 @@ try:
     HAS_SERIAL = True
 except Exception:
     HAS_SERIAL = False
+
+# -------------------------------------------------------------
+# FILE LOGGING UTILITIES
+# -------------------------------------------------------------
+def log_to_txt(filepath, text_value):
+    """Appends raw received text with a simple timestamp prefix to a txt file."""
+    try:
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(f"[{now_str}] {text_value}\n")
+    except Exception as e:
+        print(f"[TXT LOG ERROR] {e}")
+
+def log_to_csv(filepath, text_value):
+    """Appends a structured row with a timestamp and the received value to a CSV file."""
+    try:
+        file_exists = os.path.exists(filepath)
+        with open(filepath, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Received Data"])
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            writer.writerow([now_str, text_value])
+    except Exception as e:
+        print(f"[CSV LOG ERROR] {e}")
+
+def log_to_xlsx(filepath, text_value):
+    """Appends a structured row with a timestamp and the received value to an Excel file."""
+    if not HAS_OPENPYXL:
+        print("[XLSX LOG ERROR] openpyxl package not available, falling back to CSV log style")
+        csv_fallback_path = os.path.splitext(filepath)[0] + "_fallback.csv"
+        log_to_csv(csv_fallback_path, text_value)
+        return
+
+    try:
+        if os.path.exists(filepath):
+            wb = openpyxl.load_workbook(filepath)
+            ws = wb.active
+        else:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(["Timestamp", "Received Data"])
+
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        ws.append([now_str, text_value])
+        wb.save(filepath)
+    except Exception as e:
+        print(f"[XLSX LOG ERROR] {e}")
 
 # -------------------------------------------------------------
 # CONSTANTS & CONFIGURATION
@@ -301,7 +358,7 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         # Window styling
         self.title("RS232-TCP to USB-KBD Wedge")
-        self.geometry("580x680")
+        self.geometry("580x750")
         self.resizable(False, False)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -314,6 +371,10 @@ class RS232TCPToUSBApp(ctk.CTk):
         # Thread-safe formatting state
         self.prefix_value = ""
         self.suffix_value = ""
+
+        # Thread-safe file logging state
+        self.saved_file_path = ""
+        self.log_file_enabled = False
 
         # Thread-safe sequential wedge queue
         self.wedge_queue = queue.Queue()
@@ -559,7 +620,50 @@ class RS232TCPToUSBApp(ctk.CTk):
         )
         tip_label.pack(pady=(0, 10), padx=15, anchor="w")
 
-        # 5. Status & Monitor Frame
+        # 5. Save Incoming Data to File Options
+        save_file_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1a1a")
+        save_file_frame.pack(fill="x", padx=25, pady=10)
+
+        save_title = ctk.CTkLabel(
+            save_file_frame,
+            text="Save Incoming Data to File Options",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        save_title.pack(pady=(10, 5), padx=15, anchor="w")
+
+        # Checkbox for activation
+        self.save_to_file_enabled = tk.BooleanVar(value=False)
+        self.chk_save_file = ctk.CTkCheckBox(
+            save_file_frame,
+            text="Enable Logging to File",
+            variable=self.save_to_file_enabled,
+            command=self.toggle_save_file,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.chk_save_file.pack(padx=15, pady=5, anchor="w")
+
+        # File Selection row (hidden until enabled)
+        self.file_path_frame = ctk.CTkFrame(save_file_frame, fg_color="transparent")
+
+        self.file_path_entry = ctk.CTkEntry(
+            self.file_path_frame,
+            placeholder_text="No file selected...",
+            state="readonly",
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        self.file_path_entry.pack(side="left", fill="x", expand=True, padx=(15, 10), pady=(0, 10))
+
+        self.btn_browse = ctk.CTkButton(
+            self.file_path_frame,
+            text="Browse",
+            command=self.browse_save_file,
+            width=80,
+            height=28,
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        self.btn_browse.pack(side="right", padx=(0, 15), pady=(0, 10))
+
+        # 6. Status & Monitor Frame
         monitor_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="#111111")
         monitor_frame.pack(fill="x", padx=25, pady=10)
 
@@ -776,6 +880,56 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.ip_entry.configure(state=state)
         self.port_entry.configure(state=state)
 
+    def toggle_save_file(self):
+        """Called when user toggles 'Enable Logging to File' checkbox."""
+        if self.save_to_file_enabled.get():
+            # Show file path selection row
+            self.file_path_frame.pack(fill="x", pady=(0, 5))
+            # If no file path is set, automatically trigger Browse dialog
+            if not self.saved_file_path:
+                self.browse_save_file()
+        else:
+            self.file_path_frame.pack_forget()
+        self.update_wedge_formats()
+
+    def browse_save_file(self):
+        """Opens file dialog with the same modern UX and sets file path."""
+        from tkinter import filedialog
+
+        # File types: CSV is default, but TXT and XLSX are also supported.
+        filetypes = [
+            ("CSV files (*.csv)", "*.csv"),
+            ("Text files (*.txt)", "*.txt"),
+            ("Excel files (*.xlsx)", "*.xlsx"),
+            ("All files (*.*)", "*.*")
+        ]
+
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Select Output Log File",
+            defaultextension=".csv",
+            filetypes=filetypes
+        )
+
+        if path:
+            self.saved_file_path = path
+            # Update read-only entry field
+            self.file_path_entry.configure(state="normal")
+            self.file_path_entry.delete(0, "end")
+            self.file_path_entry.insert(0, path)
+            self.file_path_entry.configure(state="readonly")
+
+            # Make sure checkbox is checked if a file was successfully browsed
+            self.save_to_file_enabled.set(True)
+            self.file_path_frame.pack(fill="x", pady=(0, 5))
+        else:
+            # If user cancelled and there's no path, uncheck the box and hide frame
+            if not self.saved_file_path:
+                self.save_to_file_enabled.set(False)
+                self.file_path_frame.pack_forget()
+
+        self.update_wedge_formats()
+
     def update_wedge_formats(self, event=None):
         """Thread-safely reads values from Prefix and Suffix entries on the main thread."""
         try:
@@ -788,12 +942,17 @@ class RS232TCPToUSBApp(ctk.CTk):
         except Exception:
             self.suffix_value = ""
 
+        try:
+            self.log_file_enabled = self.save_to_file_enabled.get()
+        except Exception:
+            self.log_file_enabled = False
+
     def _wedge_queue_consumer(self):
         """Dedicated background thread loop that sequentializes keyboard wedge typing."""
         while True:
             try:
                 # Wait for the next item in the queue
-                raw_data_str, prefix_val, suffix_val = self.wedge_queue.get()
+                raw_data_str, prefix_val, suffix_val, log_enabled, log_path = self.wedge_queue.get()
 
                 # 1. Simulate Prefix
                 if prefix_val:
@@ -805,6 +964,16 @@ class RS232TCPToUSBApp(ctk.CTk):
                 # 3. Simulate Suffix
                 if suffix_val:
                     parse_and_simulate(suffix_val)
+
+                # 4. Log to File if active
+                if log_enabled and log_path:
+                    ext = os.path.splitext(log_path)[1].lower()
+                    if ext == ".xlsx":
+                        log_to_xlsx(log_path, raw_data_str)
+                    elif ext == ".csv":
+                        log_to_csv(log_path, raw_data_str)
+                    else:
+                        log_to_txt(log_path, raw_data_str)
 
                 self.wedge_queue.task_done()
             except Exception as e:
@@ -820,8 +989,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         except Exception:
             text = data_bytes.decode('latin-1', errors='replace')
 
-        # Enqueue the text along with thread-safe snapshots of prefix/suffix
-        self.wedge_queue.put((text, self.prefix_value, self.suffix_value))
+        # Enqueue the text along with thread-safe snapshots of prefix/suffix and logging options
+        self.wedge_queue.put((text, self.prefix_value, self.suffix_value, self.log_file_enabled, self.saved_file_path))
 
         # Update monitor UI thread-safely
         self.after(0, self.update_monitor_view)
