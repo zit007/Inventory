@@ -244,6 +244,15 @@ class ConnectionWorker:
         )
         self.thread.start()
 
+    def start_eth_rs232(self, eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits):
+        self.running = True
+        self.thread = threading.Thread(
+            target=self._eth_rs232_loop,
+            args=(eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits),
+            daemon=True
+        )
+        self.thread.start()
+
     def stop(self):
         self.running = False
         # Terminate sockets or serial ports to break out of blocking operations
@@ -312,6 +321,93 @@ class ConnectionWorker:
                     break
                 self.app.update_status(f"CONNECTING... (Error: {str(e)[:50]})", "orange")
                 # Auto-reconnection delay
+                time.sleep(3)
+
+        self.app.update_status("DISCONNECTED", "red")
+
+    def _eth_rs232_loop(self, eth_host, eth_port, serial_port_name, baud, parity, bytesize, stopbits):
+        if not HAS_SERIAL:
+            self.app.update_status("Error: pyserial not installed", "red")
+            self.app.handle_disconnect_event()
+            return
+
+        parity_map = {
+            'None': serial.PARITY_NONE,
+            'Even': serial.PARITY_EVEN,
+            'Odd': serial.PARITY_ODD,
+            'Mark': serial.PARITY_MARK,
+            'Space': serial.PARITY_SPACE
+        }
+        bytesize_map = {
+            '5': serial.FIVEBITS,
+            '6': serial.SIXBITS,
+            '7': serial.SEVENBITS,
+            '8': serial.EIGHTBITS
+        }
+        stopbits_map = {
+            '1': serial.STOPBITS_ONE,
+            '1.5': serial.STOPBITS_ONE_POINT_FIVE,
+            '2': serial.STOPBITS_TWO
+        }
+
+        p_val = parity_map.get(parity, serial.PARITY_NONE)
+        b_val = bytesize_map.get(str(bytesize), serial.EIGHTBITS)
+        s_val = stopbits_map.get(str(stopbits), serial.STOPBITS_ONE)
+
+        while self.running:
+            self.app.update_status(f"CONNECTING to ETH & {serial_port_name}...", "orange")
+            try:
+                # 1. Connect TCP Client
+                self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.tcp_socket.settimeout(2.0)
+                self.tcp_socket.connect((eth_host, int(eth_port)))
+
+                # 2. Open Serial Port
+                self.serial_port = serial.Serial(
+                    port=serial_port_name,
+                    baudrate=int(baud),
+                    parity=p_val,
+                    bytesize=b_val,
+                    stopbits=s_val,
+                    timeout=1.0
+                )
+
+                self.app.update_status("CONNECTED", "green")
+
+                # Receive TCP data and bridge to Serial
+                self.tcp_socket.settimeout(1.0)
+                while self.running:
+                    try:
+                        data = self.tcp_socket.recv(4096)
+                        if not data:
+                            raise socket.error("Connection closed by server")
+
+                        # Forward to Serial
+                        if self.serial_port and self.serial_port.is_open:
+                            self.serial_port.write(data)
+                            self.serial_port.flush()
+
+                        # Update UI / Wedge
+                        self.app.handle_data_received(data)
+                    except socket.timeout:
+                        continue
+            except Exception as e:
+                if not self.running:
+                    break
+                self.app.update_status(f"CONNECTING... (Error: {str(e)[:50]})", "orange")
+
+                # Cleanup connections for next retry
+                if self.tcp_socket:
+                    try:
+                        self.tcp_socket.close()
+                    except Exception:
+                        pass
+                if self.serial_port and self.serial_port.is_open:
+                    try:
+                        self.serial_port.close()
+                    except Exception:
+                        pass
+
                 time.sleep(3)
 
         self.app.update_status("DISCONNECTED", "red")
@@ -445,26 +541,36 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         self.radio_rs232 = ctk.CTkRadioButton(
             radio_container,
-            text="RS232 Serial Port",
+            text="RS232",
             variable=self.connection_type,
             value="RS232",
             command=self.toggle_connection_panels,
-            font=ctk.CTkFont(family="Segoe UI", size=13)
+            font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        self.radio_rs232.pack(side="left", expand=True, fill="x", padx=5)
+        self.radio_rs232.pack(side="left", expand=True, fill="x", padx=3)
 
         self.radio_tcp = ctk.CTkRadioButton(
             radio_container,
-            text="TCP/IP Client Connection",
+            text="TCP/IP",
             variable=self.connection_type,
             value="TCP",
             command=self.toggle_connection_panels,
-            font=ctk.CTkFont(family="Segoe UI", size=13)
+            font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        self.radio_tcp.pack(side="left", expand=True, fill="x", padx=5)
+        self.radio_tcp.pack(side="left", expand=True, fill="x", padx=3)
+
+        self.radio_eth_rs232 = ctk.CTkRadioButton(
+            radio_container,
+            text="ETH to RS232",
+            variable=self.connection_type,
+            value="ETH_RS232",
+            command=self.toggle_connection_panels,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.radio_eth_rs232.pack(side="left", expand=True, fill="x", padx=3)
 
         # 3. Parameter Panel Container (fixed height for 100% consistent sizing)
-        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=145)
+        self.params_container = ctk.CTkFrame(self, corner_radius=10, height=150)
         self.params_container.pack(fill="x", padx=25, pady=5)
         self.params_container.pack_propagate(False)
 
@@ -485,8 +591,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             values=["Scanning..."],
             width=130,
             fg_color="#357ec7",
-            button_color="#357ec7",
-            button_hover_color="#2b6fb5"
+            button_color="#1f538d",
+            button_hover_color="#14375e"
         )
         self.com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
@@ -503,8 +609,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
             width=80,
             fg_color="#357ec7",
-            button_color="#357ec7",
-            button_hover_color="#2b6fb5"
+            button_color="#1f538d",
+            button_hover_color="#14375e"
         )
         self.baud_dropdown.set("9600")
         self.baud_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
@@ -514,8 +620,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             values=["5", "6", "7", "8"],
             width=42,
             fg_color="#357ec7",
-            button_color="#357ec7",
-            button_hover_color="#2b6fb5"
+            button_color="#1f538d",
+            button_hover_color="#14375e"
         )
         self.databits_dropdown.set("8")
         self.databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
@@ -525,8 +631,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             values=["None", "Even", "Odd", "Mark", "Space"],
             width=65,
             fg_color="#357ec7",
-            button_color="#357ec7",
-            button_hover_color="#2b6fb5"
+            button_color="#1f538d",
+            button_hover_color="#14375e"
         )
         self.parity_dropdown.set("None")
         self.parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
@@ -536,8 +642,8 @@ class RS232TCPToUSBApp(ctk.CTk):
             values=["1", "1.5", "2"],
             width=42,
             fg_color="#357ec7",
-            button_color="#357ec7",
-            button_hover_color="#2b6fb5"
+            button_color="#1f538d",
+            button_hover_color="#14375e"
         )
         self.stopbits_dropdown.set("1")
         self.stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
@@ -615,6 +721,124 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         self.btn_tcp_disconnect = ctk.CTkButton(
             self.tcp_btn_frame,
+            text="Disconnect",
+            command=self.handle_disconnect,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color="#7a2a2a",
+            hover_color="#541c1c",
+            height=36
+        )
+
+        # 3C. ETH to RS232 Sub-panel
+        self.eth_rs232_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
+        self.eth_rs232_panel.columnconfigure(0, weight=1)
+        self.eth_rs232_panel.columnconfigure(1, weight=2)
+
+        # Row 0: ETH Source IP & Port
+        ctk.CTkLabel(self.eth_rs232_panel, text="ETH Source:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=4)
+        eth_action_frame = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
+        eth_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=4)
+
+        self.eth_ip_entry = ctk.CTkEntry(
+            eth_action_frame,
+            placeholder_text="e.g. 192.168.1.100",
+            fg_color="#357ec7",
+            border_color="#357ec7",
+            text_color="white",
+            placeholder_text_color="#e0e8f5",
+            width=130
+        )
+        self.eth_ip_entry.insert(0, "127.0.0.1")
+        self.eth_ip_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.eth_port_entry = ctk.CTkEntry(
+            eth_action_frame,
+            placeholder_text="e.g. 5000",
+            fg_color="#357ec7",
+            border_color="#357ec7",
+            text_color="white",
+            placeholder_text_color="#e0e8f5",
+            width=65
+        )
+        self.eth_port_entry.insert(0, "5000")
+        self.eth_port_entry.pack(side="right")
+
+        # Row 1: Target COM Port and framing characteristics
+        ctk.CTkLabel(self.eth_rs232_panel, text="COM/Frame:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=4)
+        eth_frame_row = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
+        eth_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
+
+        self.eth_com_dropdown = ctk.CTkOptionMenu(
+            eth_frame_row,
+            values=["Scanning..."],
+            width=80,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
+        self.eth_com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        self.eth_baud_dropdown = ctk.CTkOptionMenu(
+            eth_frame_row,
+            values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
+            width=70,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
+        self.eth_baud_dropdown.set("9600")
+        self.eth_baud_dropdown.pack(side="left", fill="x", expand=True, padx=4)
+
+        self.eth_databits_dropdown = ctk.CTkOptionMenu(
+            eth_frame_row,
+            values=["5", "6", "7", "8"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
+        self.eth_databits_dropdown.set("8")
+        self.eth_databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
+
+        self.eth_parity_dropdown = ctk.CTkOptionMenu(
+            eth_frame_row,
+            values=["None", "Even", "Odd", "Mark", "Space"],
+            width=65,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
+        self.eth_parity_dropdown.set("None")
+        self.eth_parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
+
+        self.eth_stopbits_dropdown = ctk.CTkOptionMenu(
+            eth_frame_row,
+            values=["1", "1.5", "2"],
+            width=42,
+            fg_color="#357ec7",
+            button_color="#1f538d",
+            button_hover_color="#14375e"
+        )
+        self.eth_stopbits_dropdown.set("1")
+        self.eth_stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        # Row 2: Buttons
+        self.eth_btn_frame = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
+        self.eth_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
+
+        self.btn_eth_connect = ctk.CTkButton(
+            self.eth_btn_frame,
+            text="Connect and Send to USB",
+            command=self.handle_connect,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color="#357ec7",
+            hover_color="#2b6fb5",
+            height=36
+        )
+        self.btn_eth_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
+
+        self.btn_eth_disconnect = ctk.CTkButton(
+            self.eth_btn_frame,
             text="Disconnect",
             command=self.handle_disconnect,
             font=ctk.CTkFont(family="Segoe UI", size=13),
@@ -771,31 +995,49 @@ class RS232TCPToUSBApp(ctk.CTk):
     # CONTROL LOGIC / ACTIONS
     # -------------------------------------------------------------
     def toggle_connection_panels(self):
-        """Switches between showing the RS232 panel and the TCP panel."""
+        """Switches between showing the RS232 panel, the TCP panel, and the ETH to RS232 panel."""
         choice = self.connection_type.get()
         if choice == "RS232":
             self.tcp_panel.pack_forget()
-            self.rs232_panel.pack(fill="both", expand=True, padx=10, pady=10)
+            self.eth_rs232_panel.pack_forget()
+            self.rs232_panel.pack(fill="both", expand=True, padx=10, pady=5)
+        elif choice == "TCP":
+            self.rs232_panel.pack_forget()
+            self.eth_rs232_panel.pack_forget()
+            self.tcp_panel.pack(fill="both", expand=True, padx=10, pady=5)
         else:
             self.rs232_panel.pack_forget()
-            self.tcp_panel.pack(fill="both", expand=True, padx=10, pady=10)
+            self.tcp_panel.pack_forget()
+            self.eth_rs232_panel.pack(fill="both", expand=True, padx=10, pady=5)
 
     def refresh_com_ports(self):
         """Scans the operating system for available COM ports."""
         if not HAS_SERIAL:
-            self.com_dropdown.configure(values=["No COM Driver"])
-            self.com_dropdown.set("No COM Driver")
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=["No COM Driver"])
+                    dropdown.set("No COM Driver")
+                except Exception:
+                    pass
             return
 
         ports = [p.device for p in serial.tools.list_ports.comports()]
         if ports:
             # Sort ports naturally (COM1, COM2, etc.)
             ports.sort(key=lambda x: [int(c) if c.isdigit() else c for c in re.split(r'(\d+)', x)])
-            self.com_dropdown.configure(values=ports)
-            self.com_dropdown.set(ports[0])
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=ports)
+                    dropdown.set(ports[0])
+                except Exception:
+                    pass
         else:
-            self.com_dropdown.configure(values=["No COM Ports Found"])
-            self.com_dropdown.set("No COM Ports Found")
+            for dropdown in (self.com_dropdown, self.eth_com_dropdown):
+                try:
+                    dropdown.configure(values=["No COM Ports Found"])
+                    dropdown.set("No COM Ports Found")
+                except Exception:
+                    pass
 
     def update_status(self, text, color):
         """Thread-safe UI status updater."""
@@ -824,7 +1066,7 @@ class RS232TCPToUSBApp(ctk.CTk):
                     state="disabled"
                 )
                 self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
-            else:
+            elif conn_mode == "TCP":
                 self.btn_tcp_connect.configure(
                     fg_color="#2b7336",
                     hover_color="#1e5225",
@@ -832,6 +1074,14 @@ class RS232TCPToUSBApp(ctk.CTk):
                     state="disabled"
                 )
                 self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_eth_connect.configure(
+                    fg_color="#2b7336",
+                    hover_color="#1e5225",
+                    text="Connected",
+                    state="disabled"
+                )
+                self.btn_eth_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
         elif color == "orange":
             # Connecting state
             if conn_mode == "RS232":
@@ -842,7 +1092,7 @@ class RS232TCPToUSBApp(ctk.CTk):
                     state="disabled"
                 )
                 self.btn_rs232_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
-            else:
+            elif conn_mode == "TCP":
                 self.btn_tcp_connect.configure(
                     fg_color="#a86208",
                     hover_color="#7c4705",
@@ -850,8 +1100,16 @@ class RS232TCPToUSBApp(ctk.CTk):
                     state="disabled"
                 )
                 self.btn_tcp_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
+            else:
+                self.btn_eth_connect.configure(
+                    fg_color="#a86208",
+                    hover_color="#7c4705",
+                    text="Connecting...",
+                    state="disabled"
+                )
+                self.btn_eth_disconnect.pack(side="left", fill="x", expand=True, padx=(5, 15))
         else:
-            # Disconnected or Error state. Restore both to original.
+            # Disconnected or Error state. Restore all three to original.
             self.btn_rs232_connect.configure(
                 fg_color="#357ec7",
                 hover_color="#2b6fb5",
@@ -867,6 +1125,14 @@ class RS232TCPToUSBApp(ctk.CTk):
                 state="normal"
             )
             self.btn_tcp_disconnect.pack_forget()
+
+            self.btn_eth_connect.configure(
+                fg_color="#357ec7",
+                hover_color="#2b6fb5",
+                text="Connect and Send to USB",
+                state="normal"
+            )
+            self.btn_eth_disconnect.pack_forget()
 
     def handle_connect(self):
         """Handles connection action, validating input parameters and launching threads."""
@@ -888,7 +1154,7 @@ class RS232TCPToUSBApp(ctk.CTk):
             stopbits = self.stopbits_dropdown.get()
 
             self.worker.start_rs232(port, baud, parity, bytesize, stopbits)
-        else:
+        elif conn_mode == "TCP":
             host = self.ip_entry.get().strip()
             port = self.port_entry.get().strip()
             if not host or not port:
@@ -904,6 +1170,34 @@ class RS232TCPToUSBApp(ctk.CTk):
                 return
 
             self.worker.start_tcp(host, port)
+        else:
+            eth_host = self.eth_ip_entry.get().strip()
+            eth_port = self.eth_port_entry.get().strip()
+            com_port = self.eth_com_dropdown.get()
+
+            if not eth_host or not eth_port:
+                self.update_status("Error: Missing ETH IP/Port", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            try:
+                int(eth_port)
+            except ValueError:
+                self.update_status("Error: Invalid ETH Port", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            if com_port in ("No COM Ports Found", "No COM Driver", "Scanning..."):
+                self.update_status("Error: No COM Port selected", "red")
+                self.toggle_ui_state("normal")
+                return
+
+            baud = self.eth_baud_dropdown.get()
+            parity = self.eth_parity_dropdown.get()
+            bytesize = self.eth_databits_dropdown.get()
+            stopbits = self.eth_stopbits_dropdown.get()
+
+            self.worker.start_eth_rs232(eth_host, eth_port, com_port, baud, parity, bytesize, stopbits)
 
     def handle_disconnect(self):
         """Handles manual disconnection request."""
@@ -919,6 +1213,7 @@ class RS232TCPToUSBApp(ctk.CTk):
         """Toggles configuration elements enabled/disabled depending on active state."""
         self.radio_rs232.configure(state=state)
         self.radio_tcp.configure(state=state)
+        self.radio_eth_rs232.configure(state=state)
         self.btn_refresh.configure(state=state)
         self.com_dropdown.configure(state=state)
         self.baud_dropdown.configure(state=state)
@@ -927,6 +1222,15 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.stopbits_dropdown.configure(state=state)
         self.ip_entry.configure(state=state)
         self.port_entry.configure(state=state)
+
+        # New ETH to RS232 fields
+        self.eth_ip_entry.configure(state=state)
+        self.eth_port_entry.configure(state=state)
+        self.eth_com_dropdown.configure(state=state)
+        self.eth_baud_dropdown.configure(state=state)
+        self.eth_databits_dropdown.configure(state=state)
+        self.eth_parity_dropdown.configure(state=state)
+        self.eth_stopbits_dropdown.configure(state=state)
 
     def toggle_save_file(self):
         """Called when user toggles 'Enable Logging to File' checkbox."""
