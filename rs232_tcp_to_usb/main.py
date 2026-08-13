@@ -107,7 +107,7 @@ def log_to_xlsx(filepath, text_value):
 # -------------------------------------------------------------
 # CONSTANTS & CONFIGURATION
 # -------------------------------------------------------------
-VERSION = "v1.0.0"
+VERSION = "v1.0.3 @NM"
 
 CONTROL_CHARS = {
     0: '[NUL]', 1: '[SOH]', 2: '[STX]', 3: '[ETX]', 4: '[EOT]', 5: '[ENQ]', 6: '[ACK]',
@@ -508,8 +508,8 @@ class RS232TCPToUSBApp(ctk.CTk):
         super().__init__()
 
         # Window styling
-        self.title("RS232-TCP to USB-KBD Wedge")
-        self.geometry("580x700")
+        self.title("Datalogic SIS EE RS232/TCP to USB-KBD Wedge")
+        self.geometry("580x680")
         self.resizable(False, False)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -583,7 +583,7 @@ class RS232TCPToUSBApp(ctk.CTk):
 
         title_label = ctk.CTkLabel(
             header_frame,
-            text="RS232-TCP to USB Keyboard Wedge",
+            text="RS232/TCP to USB Keyboard Wedge",
             font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold")
         )
         title_label.pack(side="left")
@@ -757,186 +757,17 @@ class RS232TCPToUSBApp(ctk.CTk):
         self.tcp_panel.columnconfigure(0, weight=1)
         self.tcp_panel.columnconfigure(1, weight=2)
 
-        # Server Host/IP with same lighter blue UX
-        ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=6)
-        self.ip_entry = ctk.CTkEntry(
-            self.tcp_panel,
-            placeholder_text="e.g. 192.168.1.100",
-            fg_color="#357ec7",
-            border_color="#357ec7",
-            text_color="white",
-            placeholder_text_color="#e0e8f5"
-        )
-        self.ip_entry.insert(0, "127.0.0.1")
-        self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=6)
+        # Server Host/IP
+        ctk.CTkLabel(self.tcp_panel, text="Server IP Address:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=15)
+        self.ip_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 192.168.3.100")
+        self.ip_entry.insert(0, "192.168.3.100")
+        self.ip_entry.grid(row=0, column=1, sticky="we", padx=15, pady=15)
 
-        # Server Port with same lighter blue UX
-        ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=6)
-        self.port_entry = ctk.CTkEntry(
-            self.tcp_panel,
-            placeholder_text="e.g. 5000",
-            fg_color="#357ec7",
-            border_color="#357ec7",
-            text_color="white",
-            placeholder_text_color="#e0e8f5"
-        )
-        self.port_entry.insert(0, "5000")
-        self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=6)
-
-        # Local TCP/IP Buttons (compact vertical margins)
-        self.tcp_btn_frame = ctk.CTkFrame(self.tcp_panel, fg_color="transparent")
-        self.tcp_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
-
-        self.btn_tcp_connect = ctk.CTkButton(
-            self.tcp_btn_frame,
-            text="Connect and Send to USB",
-            command=self.handle_connect,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            fg_color="#357ec7",
-            hover_color="#2b6fb5",
-            height=36
-        )
-        self.btn_tcp_connect.pack(side="left", fill="x", expand=True, padx=(15, 15))
-
-        self.btn_tcp_disconnect = ctk.CTkButton(
-            self.tcp_btn_frame,
-            text="Disconnect",
-            command=self.handle_disconnect,
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            fg_color="#7a2a2a",
-            hover_color="#541c1c",
-            height=36
-        )
-
-        # 3C. ETH to RS232 Sub-panel
-        self.eth_rs232_panel = ctk.CTkFrame(self.params_container, fg_color="transparent")
-        self.eth_rs232_panel.columnconfigure(0, weight=1)
-        self.eth_rs232_panel.columnconfigure(1, weight=2)
-
-        # Row 0: ETH Source IP & Port
-        ctk.CTkLabel(self.eth_rs232_panel, text="ETH Source:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=0, column=0, sticky="w", padx=15, pady=4)
-        eth_action_frame = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
-        eth_action_frame.grid(row=0, column=1, sticky="we", padx=15, pady=4)
-
-        self.eth_ip_entry = ctk.CTkEntry(
-            eth_action_frame,
-            placeholder_text="e.g. 192.168.1.100",
-            fg_color="#357ec7",
-            border_color="#357ec7",
-            text_color="white",
-            placeholder_text_color="#e0e8f5",
-            width=130
-        )
-        self.eth_ip_entry.insert(0, "127.0.0.1")
-        self.eth_ip_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-        self.eth_port_entry = ctk.CTkEntry(
-            eth_action_frame,
-            placeholder_text="e.g. 5000",
-            fg_color="#357ec7",
-            border_color="#357ec7",
-            text_color="white",
-            placeholder_text_color="#e0e8f5",
-            width=65
-        )
-        self.eth_port_entry.insert(0, "5000")
-        self.eth_port_entry.pack(side="right")
-
-        # Row 1: Target COM Port and framing characteristics
-        ctk.CTkLabel(self.eth_rs232_panel, text="COM/Frame:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=4)
-        eth_frame_row = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
-        eth_frame_row.grid(row=1, column=1, sticky="we", padx=15, pady=4)
-
-        self.eth_com_dropdown = ctk.CTkComboBox(
-            eth_frame_row,
-            values=["Scanning..."],
-            width=80,
-            fg_color="#357ec7",
-            border_color="#357ec7",
-            button_color="#1f538d",
-            button_hover_color="#14375e"
-        )
-        self.eth_com_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 4))
-
-        self.eth_baud_dropdown = ctk.CTkOptionMenu(
-            eth_frame_row,
-            values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
-            width=70,
-            fg_color="#357ec7",
-            button_color="#1f538d",
-            button_hover_color="#14375e"
-        )
-        self.eth_baud_dropdown.set("9600")
-        self.eth_baud_dropdown.pack(side="left", fill="x", expand=True, padx=4)
-
-        self.eth_databits_dropdown = ctk.CTkOptionMenu(
-            eth_frame_row,
-            values=["5", "6", "7", "8"],
-            width=42,
-            fg_color="#357ec7",
-            button_color="#1f538d",
-            button_hover_color="#14375e"
-        )
-        self.eth_databits_dropdown.set("8")
-        self.eth_databits_dropdown.pack(side="left", fill="x", expand=True, padx=4)
-
-        self.eth_parity_dropdown = ctk.CTkOptionMenu(
-            eth_frame_row,
-            values=["None", "Even", "Odd", "Mark", "Space"],
-            width=65,
-            fg_color="#357ec7",
-            button_color="#1f538d",
-            button_hover_color="#14375e"
-        )
-        self.eth_parity_dropdown.set("None")
-        self.eth_parity_dropdown.pack(side="left", fill="x", expand=True, padx=4)
-
-        self.eth_stopbits_dropdown = ctk.CTkOptionMenu(
-            eth_frame_row,
-            values=["1", "1.5", "2"],
-            width=42,
-            fg_color="#357ec7",
-            button_color="#1f538d",
-            button_hover_color="#14375e"
-        )
-        self.eth_stopbits_dropdown.set("1")
-        self.eth_stopbits_dropdown.pack(side="left", fill="x", expand=True, padx=(4, 0))
-
-        # Row 2: Buttons
-        self.eth_btn_frame = ctk.CTkFrame(self.eth_rs232_panel, fg_color="transparent")
-        self.eth_btn_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), sticky="we")
-
-        self.btn_open_com = ctk.CTkButton(
-            self.eth_btn_frame,
-            text="Open COM port",
-            command=self.handle_open_com_port,
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            fg_color="#357ec7",
-            hover_color="#2b6fb5",
-            height=36
-        )
-        self.btn_open_com.pack(side="left", fill="x", expand=True, padx=(15, 5))
-
-        self.btn_eth_connect = ctk.CTkButton(
-            self.eth_btn_frame,
-            text="Connect and Send",
-            command=self.handle_connect,
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            fg_color="#357ec7",
-            hover_color="#2b6fb5",
-            height=36
-        )
-        self.btn_eth_connect.pack(side="left", fill="x", expand=True, padx=(5, 15))
-
-        self.btn_eth_disconnect = ctk.CTkButton(
-            self.eth_btn_frame,
-            text="Disconnect",
-            command=self.handle_disconnect,
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            fg_color="#7a2a2a",
-            hover_color="#541c1c",
-            height=36
-        )
+        # Server Port
+        ctk.CTkLabel(self.tcp_panel, text="Server Port:", font=ctk.CTkFont(family="Segoe UI", size=12)).grid(row=1, column=0, sticky="w", padx=15, pady=15)
+        self.port_entry = ctk.CTkEntry(self.tcp_panel, placeholder_text="e.g. 51236")
+        self.port_entry.insert(0, "51236")
+        self.port_entry.grid(row=1, column=1, sticky="we", padx=15, pady=15)
 
         # Pack initial panel based on default radio selection
         self.toggle_connection_panels()
