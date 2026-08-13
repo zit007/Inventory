@@ -895,6 +895,11 @@ class RS232TCPToUSBApp(ctk.CTk):
     def toggle_save_file(self):
         """Called when user toggles 'Enable Logging to File' checkbox."""
         if self.save_to_file_enabled.get():
+            # Force disconnect if active
+            if self.worker.running:
+                messagebox.showwarning("Must disconnect first", "Must disconnect before saving to file")
+                self.handle_disconnect()
+
             # Show file path selection row
             self.file_path_frame.pack(fill="x", pady=(0, 5))
             # If no file path is set, automatically trigger Browse dialog
@@ -906,6 +911,11 @@ class RS232TCPToUSBApp(ctk.CTk):
 
     def browse_save_file(self):
         """Opens file dialog with the same modern UX and sets file path."""
+        # Force disconnect if active
+        if self.worker.running:
+            messagebox.showwarning("Must disconnect first", "Must disconnect before saving to file")
+            self.handle_disconnect()
+
         from tkinter import filedialog
 
         # File types: CSV is default, but TXT and XLSX are also supported.
